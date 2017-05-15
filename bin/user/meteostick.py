@@ -377,7 +377,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         if self.station.output_format == 'raw':
             # raw format
             for ch in range(1, self.NUM_CHAN - 1): # no ch 0 or MACHINE_CHANNEL
-                if self.rf_stats['cnt'][ch] > 0:
+                if self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch] > 0:
                     self.rf_stats['pctgood'][ch] = \
                         int(0.5 + 100.0 * self.rf_stats['cnt'][ch] /
                             (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch]))
