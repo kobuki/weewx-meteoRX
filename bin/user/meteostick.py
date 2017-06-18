@@ -296,7 +296,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         for ch in self.station.idmap:
             if self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch] > 0:
                 self.rf_stats['pctgood'][ch] = \
-                    int(self.rf_stats['cnt'][ch] / (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch])
+                    int(float(self.rf_stats['cnt'][ch]) / (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch])
                         * 100.0 + 0.5)
                 received_total += self.rf_stats['cnt'][ch]
                 missed_total += self.rf_stats['missed'][ch]
@@ -307,7 +307,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                 self.rf_stats['pctgood'][ch] = None
                 loginf('WARNING: no data reveived for channel number %s' % ch)
 
-        self.rf_stats['pctgood_total'] = received_total / (received_total + missed_total)
+        self.rf_stats['pctgood_total'] = int(float(received_total) / (received_total + missed_total) * 100.0 + 0.5)
 
     def _report_rf_stats(self):
         logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.station.rfs)
@@ -390,10 +390,11 @@ class Meteostick(object):
         channels['leaf_soil'] = int(cfg.get('leaf_soil_channel', 0))
         channels['temp_hum_1'] = int(cfg.get('temp_hum_1_channel', 0))
         channels['temp_hum_2'] = int(cfg.get('temp_hum_2_channel', 0))
-        if channels['anemometer'] == 0:
-            channels['wind_channel'] = channels['iss']
-        else:
-            channels['wind_channel'] = channels['anemometer']
+        # TODO: find out why wind_channel has been invented since it's used nowhere
+        # if channels['anemometer'] == 0:
+        #     channels['wind_channel'] = channels['iss']
+        # else:
+        #     channels['wind_channel'] = channels['anemometer']
         self.channels = channels
         idmap = dict()  # channel id -> channel name mapping
         for name, chid in channels.iteritems():
@@ -613,9 +614,10 @@ class Meteostick(object):
             battery_low = (pkt[0] >> 3) & 0x1
             data['rf_signal'] = int(parts[11])
             time_since_last = int(parts[12])
-            packet_delay = (41 + data['channel'] - 1) / 16 * 1000000
-            data['rf_missed'] = int(time_since_last / packet_delay + 0.5) - 1 if time_since_last > 0 else 0
-            if data['rf_missed'] > 0:
+            packet_delay = (41 + data['channel'] - 1) / 16.0 * 1000000
+            rf_missed = int(time_since_last / packet_delay + 0.5) - 1
+            data['rf_missed'] = rf_missed if rf_missed >= 0 else 0  # startup packet delays can be small causing -1 here
+            if data['rf_missed'] != 0:
                 dbg_parse(3, "channel %s missed %s" % (data['channel'], data['rf_missed']))
 
             if data['channel'] == iss_ch or data['channel'] == wind_ch \
