@@ -115,82 +115,7 @@ SM_MAP = {RAW: ( 99.2, 140.1, 218.7, 226.9, 266.8, 391.7, 475.6, 538.2, 596.1, 6
 LW_MAP = {RAW: (857.0, 864.0, 895.0, 911.0, 940.0, 952.0, 991.0, 1013.0),
           POT: ( 15.0,  14.0,   5.0,   4.0,   3.0,   2.0,   1.0,    0.0)}
 
-
-def calculate_thermistor_temp(temp_raw):
-    """ Decode the raw thermistor temperature, then calculate the actual
-    thermistor temperature and the leaf_soil potential, using Davis' formulas.
-    see: https://github.com/cmatteri/CC1101-Weather-Receiver/wiki/Soil-Moisture-Station-Protocol
-    :param temp_raw: raw value from sensor for leaf wetness and soil moisture
-    """
-
-    # Convert temp_raw to a resistance (R) in kiloOhms
-    a = 18.81099
-    b = 0.0009988027
-    r = a / (1.0 / temp_raw - b) / 1000 # k ohms
-
-    # Steinhart-Hart parameters
-    s1 = 0.002783573
-    s2 = 0.0002509406
-    try:
-        thermistor_temp = 1 / (s1 + s2 * math.log(r)) - 273
-        dbg_parse(3, 'r (k ohm) %s temp_raw %s thermistor_temp %s' %
-                  (r, temp_raw, thermistor_temp))
-        return thermistor_temp
-    except ValueError, e:
-        logerr('thermistor_temp failed for temp_raw %s r (k ohm) %s'
-               'error: %s' % (temp_raw, r, e))
-    return DEFAULT_SOIL_TEMP
-
-
-def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
-    """Look up potential based upon a normalized raw value (i.e. temp corrected
-    for DEFAULT_SOIL_TEMP) and a linear function between two points in the
-    lookup table.
-    :param lookup: a table with both sensor_raw_norm values and corresponding
-                   potential values. the table is composed for a specific
-                   norm-factor.
-    :param sensor_temp: sensor temp in C
-    :param sensor_raw: sensor raw potential value
-    :param norm_fact: temp correction factor for normalizing sensor-raw values
-    :param sensor_name: string used in debug messages
-    """
-
-    # normalize raw value for standard temperature (DEFAULT_SOIL_TEMP)
-    sensor_raw_norm = sensor_raw * (1 + norm_fact * (sensor_temp - DEFAULT_SOIL_TEMP))
-
-    numcols = len(lookup[RAW])
-    if sensor_raw_norm >= lookup[RAW][numcols - 1]:
-        potential = lookup[POT][numcols - 1] # preset potential to last value
-        dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s >= RAW=%s" %
-                  (sensor_name, sensor_temp, norm_fact, sensor_raw,
-                   sensor_raw_norm, potential, lookup[RAW][numcols - 1]))
-    else:
-        potential = lookup[POT][0] # preset potential to first value
-        # lookup sensor_raw_norm value in table
-        for x in range(0, numcols):
-            if sensor_raw_norm < lookup[RAW][x]:
-                if x == 0:
-                    # 'pre zero' phase; potential = first value
-                    dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s < RAW=%s" %
-                              (sensor_name, sensor_temp, norm_fact, sensor_raw,
-                               sensor_raw_norm, potential, lookup[RAW][0]))
-                    break
-                else:
-                    # determine the potential value
-                    potential_per_raw = (lookup[POT][x] - lookup[POT][x - 1]) / (lookup[RAW][x] - lookup[RAW][x - 1])
-                    potential_offset = (sensor_raw_norm - lookup[RAW][x - 1]) * potential_per_raw
-                    potential = lookup[POT][x - 1] + potential_offset
-                    dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s RAW=%s to %s POT=%s to %s " %
-                              (sensor_name, sensor_temp, norm_fact, sensor_raw,
-                               sensor_raw_norm, potential,
-                               lookup[RAW][x - 1], lookup[RAW][x],
-                               lookup[POT][x - 1], lookup[POT][x]))
-                    break
-    return potential
-
-
 RAW_CHANNEL = 0  # unused channel for the receiver stats in raw format
-MACHINE_CHANNEL = 9  # fake channel for the receiver stats in machine format
 
 
 class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
@@ -339,9 +264,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             'avg': [0] * self.NUM_CHAN,
             'missed': [0] * self.NUM_CHAN,
             'pctgood': [None] * self.NUM_CHAN,
+            'pctgood_total': None,
             'ts': int(time.time())}
-        # unlike the rf sensitivity measures, pct_good is positive
-        self.rf_stats['min'][MACHINE_CHANNEL] = 100
 
     def _update_rf_stats(self, ch, signal, missed):
         # update the rf statistics
@@ -358,83 +282,70 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         # The pctgood is a measure of rf quality.  The way it is calculated
         # depends on the output format.
         #
-        # For machine, pct_good is (can be) part of the 'B' messages.  This
-        # value will be saved in the rf_stats of MACHINE_CHANNEL, typically
-        # once per minute.  When the summaries are calculated, the average of
-        # the pct_good values will be stored in the pctgood value of
-        # iss_channel.  The values of pctgood for the other active channels
-        # remain unchanged (i.e., None)
-        #
         # For raw format, the values of pctgood will be calculated per active
         # channel when the summaries are calculated, based upon the number of
-        # received good packets and number of missed packets.  The min stat
-        # for MACHINE_CHANNEL will always have the (initial) value of 100
-        # when the format is raw.
+        # received good packets and number of missed packets.
 
-        for ch in range(1, self.NUM_CHAN): # skip channel 0 (it is not used)
+        for ch in self.station.idmap:
             if self.rf_stats['cnt'][ch] > 0:
-                self.rf_stats['avg'][ch] = int(self.rf_stats['sum'][ch] / self.rf_stats['cnt'][ch])
-        if self.station.output_format == 'raw':
-            # raw format
-            for ch in range(1, self.NUM_CHAN - 1): # no ch 0 or MACHINE_CHANNEL
-                if self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch] > 0:
-                    self.rf_stats['pctgood'][ch] = \
-                        int(0.5 + 100.0 * self.rf_stats['cnt'][ch] /
-                            (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch]))
-                    if -self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['missed'][ch] > 0:
-                        loginf('WARNING: rf_sensitivity (%s) might be too low for channel %s (%s signals missed)'
-                               % (self.station.rfs, ch, self.rf_stats['missed'][ch]))
-        else:
-            # machine format
-            self.rf_stats['pctgood'][self.station.channels['iss']] = self.rf_stats['avg'][MACHINE_CHANNEL]
+                self.rf_stats['avg'][ch] = int(self.rf_stats['sum'][ch] / self.rf_stats['cnt'][ch])  # chan RSSI average
+
+        # raw format
+        received_total = 0
+        missed_total = 0
+        for ch in self.station.idmap:
+            if self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch] > 0:
+                self.rf_stats['pctgood'][ch] = \
+                    int(self.rf_stats['cnt'][ch] / (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch])
+                        * 100.0 + 0.5)
+                received_total += self.rf_stats['cnt'][ch]
+                missed_total += self.rf_stats['missed'][ch]
+                if -self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['missed'][ch] > 0:
+                    loginf('WARNING: rf_sensitivity (%s) might be too low for channel %s (%s signals missed)'
+                           % (self.station.rfs, ch, self.rf_stats['missed'][ch]))
+            else:
+                self.rf_stats['pctgood'][ch] = None
+                loginf('WARNING: no data reveived for channel number %s' % ch)
+
+        self.rf_stats['pctgood_total'] = received_total / (received_total + missed_total)
 
     def _report_rf_stats(self):
-        raw_format = self.rf_stats['min'][MACHINE_CHANNEL] == 100
-        logdbg("RF summary: rf_sensitivity=%s (values in dB)" %
-               self.station.rfs)
+        logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.station.rfs)
         logdbg("Station           max   min   avg   last  count [missed] [good]")
-        for x in [('iss', self.station.channels['iss']),
-                  ('wind', self.station.channels['anemometer']),
-                  ('leaf_soil', self.station.channels['leaf_soil']),
-                  ('temp_hum_1', self.station.channels['temp_hum_1']),
-                  ('temp_hum_2', self.station.channels['temp_hum_2']),
-                  ('pct_good', MACHINE_CHANNEL)]:
-            if x[1] != 0:
-                if not(raw_format and x[1] == MACHINE_CHANNEL):
-                    self._report_channel(x[0], x[1], raw_format)
+        for name, chid in self.station.channels.iteritems():
+            if chid != 0:
+                self._report_channel(name, chid)
 
-    def _report_channel(self, label, ch, raw_format):
-        if raw_format:
-            if self.rf_stats['pctgood'][ch] is None \
-                    or (-self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['pctgood'][ch] < 85):
-                msg = "WARNING: rf_sensitivity might be too low for this channel"
-            else:
-                msg = ""
-            logdbg("%s %5d %5d %5d %5d %5d %7d      %s   %s" %
-                   (label.ljust(15),
-                    self.rf_stats['max'][ch],
-                    self.rf_stats['min'][ch],
-                    self.rf_stats['avg'][ch],
-                    self.rf_stats['last'][ch],
-                    self.rf_stats['cnt'][ch],
-                    self.rf_stats['missed'][ch],
-                    self.rf_stats['pctgood'][ch],
-                    msg))
+    def _report_channel(self, label, ch):
+        if self.rf_stats['pctgood'][ch] is None \
+                or (-self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['pctgood'][ch] < 85):
+            msg = "WARNING: rf_sensitivity might be too low for this channel"
         else:
-            logdbg("%s %5d %5d %5d %5d %5d" %
-                   (label.ljust(15),
-                    self.rf_stats['max'][ch],
-                    self.rf_stats['min'][ch],
-                    self.rf_stats['avg'][ch],
-                    self.rf_stats['last'][ch],
-                    self.rf_stats['cnt'][ch]))
+            msg = ""
+        logdbg("%s %5d %5d %5d %5d %5d %7d      %s   %s" %
+               (label.ljust(15),
+                self.rf_stats['max'][ch],
+                self.rf_stats['min'][ch],
+                self.rf_stats['avg'][ch],
+                self.rf_stats['last'][ch],
+                self.rf_stats['cnt'][ch],
+                self.rf_stats['missed'][ch],
+                self.rf_stats['pctgood'][ch],
+                msg))
 
     def new_archive_record(self, event):
         self._update_rf_summaries()  # calculate rf summaries
         # Don't store the firsts results after startup; the data is not complete
         if not self.first_rf_stats:
-            event.record['rxCheckPercent'] = self.rf_stats['pctgood'][self.station.channels['iss']]
+
+            # using ISS as rxCheckPercent reference
+            # event.record['rxCheckPercent'] = self.rf_stats['pctgood'][self.station.channels['iss']]
+
+            # using totals for all channels as rxCheckPercent reference
+            event.record['rxCheckPercent'] = self.rf_stats['pctgood_total']
+
             logdbg("data['rxCheckPercent']: %s" % event.record['rxCheckPercent'])
+
         self.first_rf_stats = False
         if DEBUG_RFS:
             self._report_rf_stats()
@@ -443,6 +354,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
 
 class Meteostick(object):
     DEFAULT_PORT = '/dev/ttyUSB0'
+    DEFAULT_TYPE = 'vp2'
     DEFAULT_BAUDRATE = 115200
     DEFAULT_FREQUENCY = 'EU'
     DEFAULT_RF_SENSITIVITY = 90
@@ -451,6 +363,9 @@ class Meteostick(object):
     def __init__(self, **cfg):
         self.port = cfg.get('port', self.DEFAULT_PORT)
         loginf('using serial port %s' % self.port)
+
+        self.station_type = cfg.get('station_type', self.DEFAULT_TYPE)
+        loginf('using station type %s' % self.station_type)
 
         self.baudrate = cfg.get('baudrate', self.DEFAULT_BAUDRATE)
         loginf('using baudrate %s' % self.baudrate)
@@ -469,12 +384,7 @@ class Meteostick(object):
         self.rf_threshold = absrfs * 2
         loginf('using rf sensitivity %s (-%s dB)' % (rfs, absrfs))
 
-        fmt = cfg.get('format', 'raw')
-        if fmt.lower() not in ['machine', 'raw']:
-            raise ValueError("unsupported format '%s'" % fmt)
-        self.output_format = fmt.lower()
-        loginf('using output_format %s' % fmt)
-        channels = dict()
+        channels = dict()  # channel name -> channel id mapping
         channels['iss'] = int(cfg.get('iss_channel', 1))
         channels['anemometer'] = int(cfg.get('anemometer_channel', 0))
         channels['leaf_soil'] = int(cfg.get('leaf_soil_channel', 0))
@@ -485,6 +395,11 @@ class Meteostick(object):
         else:
             channels['wind_channel'] = channels['anemometer']
         self.channels = channels
+        idmap = dict()  # channel id -> channel name mapping
+        for name, chid in channels.iteritems():
+            if chid != 0:
+                idmap[chid] = name
+        self.idmap = idmap
         loginf('using iss_channel %s' % channels['iss'])
         loginf('using anemometer_channel %s' % channels['anemometer'])
         loginf('using leaf_soil_channel %s' % channels['leaf_soil'])
@@ -608,11 +523,8 @@ class Meteostick(object):
         # Filter transmissions from anything other than configured transmitters
         self.send_command('f1')
 
-        # Set device to produce machine readable data
-        command = 'o1'
-        if self.output_format == 'raw':
-            # Set device to produce raw data
-            command = 'o0'
+        # Set device to produce raw data
+        command = 'o0'
         self.send_command(command)
 
         # Set the frequency. Valid frequencies are US, EU and AU
@@ -651,150 +563,26 @@ class Meteostick(object):
             logerr("unprintable characters in readings: %s" % _fmt(raw))
             return data
         try:
-            if self.output_format == 'raw':
-                data = self.parse_raw(raw,
-                                      self.channels['iss'],
-                                      self.channels['anemometer'],
-                                      self.channels['leaf_soil'],
-                                      self.channels['temp_hum_1'],
-                                      self.channels['temp_hum_2'],
-                                      rain_per_tip)
-            else:
-                data = self.parse_machine(raw,
-                                          self.channels['iss'],
-                                          self.channels['temp_hum_1'],
-                                          self.channels['temp_hum_2'])
+            data = self.parse_raw(raw,
+                                  self.channels['iss'],
+                                  self.channels['anemometer'],
+                                  self.channels['leaf_soil'],
+                                  self.channels['temp_hum_1'],
+                                  self.channels['temp_hum_2'],
+                                  rain_per_tip,
+                                  self.station_type)
         except ValueError, e:
             logerr("parse failed for '%s': %s" % (raw, e))
         return data
 
     @staticmethod
-    def parse_machine(raw, iss_ch, th1_ch, th2_ch):
-        # parse the 'machine' format
-        # message example:
-        # W 3 0.00 261 -53 L
+    def parse_raw(raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch, rain_per_tip, station_type):
         data = dict()
         parts = Meteostick.get_parts(raw)
         n = len(parts)
-        data['channel'] = 0  # preset not available
-        data['rf_signal'] = 0  # preset not available
-        data['rf_missed'] = 0  # preset not available
-        if parts[0] == 'B':
-            # message examples:
-            # B 35.2 1023.57
-            # B 35.2 1023.57 65%
-            if n >= 3:
-                data['temp_in'] = float(parts[1]) # C
-                data['pressure'] = float(parts[2]) # hPa
-                if n >= 4:
-                    data['channel'] = MACHINE_CHANNEL
-                    data['rf_signal'] = float(parts[3].strip('%'))
-            else:
-                logerr("B: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] in 'WT':
-            # message examples:
-            # W 1 0.44 233 -68
-            # W 3 0.00 261 -53 L
-            # T 1 19.6 41 -66
-            # T 3 20.8 36 -53 L
-            if n >= 5:
-                data['channel'] = int(parts[1])
-                data['rf_signal'] = float(parts[4])
-                bat = 1 if n >= 6 and parts[5] == 'L' else 0
-                if parts[0] == 'W':
-                    if iss_ch != 0 and data['channel'] == iss_ch:
-                        data['bat_iss'] = bat
-                    else:
-                        data['bat_anemometer'] = bat
-                    data['wind_speed'] = float(parts[2]) # m/s
-                    data['wind_dir'] = float(parts[3]) # degrees
-                elif parts[0] == 'T':
-                    temp_c = float(parts[2]) # C
-                    if th1_ch != 0 and data['channel'] == th1_ch:
-                        data['bat_th_1'] = bat
-                        data['temp_1'] = temp_c
-                        data['humid_1'] = float(parts[3]) # %
-                    elif th2_ch != 0 and data['channel'] == th2_ch:
-                        data['bat_th_2'] = bat
-                        data['temp_2'] = temp_c
-                        data['humid_2'] = float(parts[3]) # %
-                    else:
-                        data['bat_iss'] = bat
-                        data['temperature'] = temp_c
-                        data['humidity'] = float(parts[3]) # %
-            else:
-                logerr("WT: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] in 'LMO':
-            # message examples:
-            # L 7 2 0 -52
-            # M 7 1 49 -51
-            # O 7 1 22.3 -51
-            if n >= 5:
-                data['channel'] = int(parts[1])
-                data['rf_signal'] = float(parts[4])
-                data['bat_leaf_soil'] = 1 if n >= 6 and parts[5] == 'L' else 0
-                if parts[0] == 'L':
-                    # bug: the zero values of not connected leaf wetness
-                    # sensors are also given
-                    data['leaf_wetness_%s' % parts[2]] = float(parts[3]) # 0-15
-                    dbg_parse(2, "leaf_wetness_%s=%s" %
-                              (parts[2], float(parts[3])))
-                elif parts[0] == 'M':
-                    data['soil_moisture_%s' % parts[2]] = float(parts[3]) # cbar 0-200
-                    dbg_parse(2, "soil_moisture_%s=%s" %
-                              (parts[2], float(parts[3])))
-                elif parts[0] == 'O':
-                    temp_c = float(parts[3]) # C
-                    data['soil_temp_%s' % parts[2]] = temp_c
-                    dbg_parse(2, "soil_temp_%s=%s" %
-                              (parts[2], float(parts[3])))
-                    # When connected to ports 1 and 2 the temp sensor is also
-                    # used for the leaf wetness temperatures
-                    if int(parts[2]) <= 2:
-                        data['leaf_temp_%s' % parts[2]] = temp_c
-                        dbg_parse(2, "leaf_temp_%s=%s" %
-                                  (parts[2], float(parts[3])))
-            else:
-                logerr("LMO: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] in 'RSUP':
-            # message examples:
-            # R 2 128 -67
-            # S 621.2 -68
-            # U 3 0.4 -58 L
-            # P 1 21.1 -68
-            if n >= 4:
-                data['channel'] = int(parts[1])
-                data['rf_signal'] = float(parts[3])
-                data['bat_iss'] = 1 if n >= 5 and parts[4] == 'L' else 0
-                if parts[0] == 'R':
-                    rain_count = int(parts[2])
-                    if 0 <= rain_count < 128:
-                        data['rain_count'] = rain_count  # 0-127
-                    elif rain_count == 128: # value of 128 indicates no sensor
-                        pass
-                    else:
-                        loginf("ignoring invalid rain %s on channel %s" %
-                               (rain_count, data['channel']))
-                elif parts[0] == 'S':
-                    data['solar_radiation'] = float(parts[2])  # W/m^2
-                elif parts[0] == 'U':
-                    data['uv'] = float(parts[2])
-                elif parts[0] == 'P':
-                    data['solar_power'] = float(parts[2])  # 0-100
-            else:
-                logerr("RSUP: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] == '#':
-            loginf("%s" % raw)
-        else:
-            logerr("unknown sensor identifier '%s' in %s" % (parts[0], raw))
-        return data
 
-    @staticmethod
-    def parse_raw(raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch, rain_per_tip):
-        data = dict()
-        parts = Meteostick.get_parts(raw)
-        n = len(parts)
         if parts[0] == 'B':
+            # receiver-provided data, like temperature, barometric pressure, stats, RH (optional)
             # message example:
             # B 29530 338141 366 101094 60 37
             data['channel'] = RAW_CHANNEL # rf_signal data will not be used
@@ -802,11 +590,12 @@ class Meteostick(object):
             data['rf_missed'] = 0  # not available
             if n >= 6:
                 data['temp_in'] = float(parts[3]) / 10.0 # C
-                data['pressure'] = float(parts[4]) / 100.0 # hPa
+                data['pressure'] = float(parts[4]) / 100.0 # millibar (hectopascal)
                 if n > 7:
                     data['humidity_in'] = float(parts[7]) # only with custom receiver
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
+
         elif parts[0] == 'I':
             # raw Davis sensor message in 8 byte format incl header and
             # additional info
@@ -824,10 +613,10 @@ class Meteostick(object):
             battery_low = (pkt[0] >> 3) & 0x1
             data['rf_signal'] = int(parts[11])
             time_since_last = int(parts[12])
-            data['rf_missed'] = ((time_since_last + 1250000) // 2500000) - 1
+            packet_delay = (41 + data['channel'] - 1) / 16 * 1000000
+            data['rf_missed'] = int(time_since_last / packet_delay + 0.5) - 1 if time_since_last > 0 else 0
             if data['rf_missed'] > 0:
-                dbg_parse(3, "channel %s missed %s" %
-                          (data['channel'], data['rf_missed']))
+                dbg_parse(3, "channel %s missed %s" % (data['channel'], data['rf_missed']))
 
             if data['channel'] == iss_ch or data['channel'] == wind_ch \
                     or data['channel'] == th1_ch or data['channel'] == th2_ch:
@@ -878,8 +667,14 @@ class Meteostick(object):
 
                     data['wind_speed_ec'] = wind_speed_ec
                     data['wind_speed_raw'] = wind_speed_raw
-                    data['wind_dir'] = wind_dir_pro
-                    data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
+
+                    if station_type == 'vp2':
+                        data['wind_dir'] = wind_dir_pro
+                        data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
+                    else:
+                        data['wind_dir'] = wind_dir_vue
+                        data['wind_speed'] = wind_speed_raw * MPH_TO_MPS
+
                     dbg_parse(2, "WS=%s WD=%s WS_raw=%s WS_ec=%s WD_raw=%s WD_pro=%s WD_vue=%s" %
                               (data['wind_speed'], data['wind_dir'],
                                wind_speed_raw, wind_speed_ec,
@@ -936,7 +731,6 @@ class Meteostick(object):
                     dbg_parse(2, "time_between_tips_raw=%03x (%s)" %
                               (time_between_tips_raw, time_between_tips_raw))
                     if data['channel'] == iss_ch: # rain sensor is present
-                        rain_rate = None
                         if time_between_tips_raw == 0x3FF:
                             # no rain
                             rain_rate = 0
@@ -997,7 +791,7 @@ class Meteostick(object):
                         else:
                             # analog sensor (thermistor)
                             temp_raw /= 4  # 10-bits temp value
-                            temp_c = calculate_thermistor_temp(temp_raw)
+                            temp_c = Meteostick.calculate_thermistor_temp(temp_raw)
                             dbg_parse(2, "thermistor temp_raw=0x%03x temp_c=%s"
                                       % (temp_raw, temp_c))
                         if data['channel'] == th1_ch:
@@ -1080,7 +874,7 @@ class Meteostick(object):
                         # I 104 F2 29 FF FF C0 C0 F1 EC  -52 2687408 124 (no sensor)
                         if pkt[3] != 0xFF:
                             # soil temperature
-                            temp_c = calculate_thermistor_temp(temp_raw)
+                            temp_c = Meteostick.calculate_thermistor_temp(temp_raw)
                             data['soil_temp_%s' % sensor_num] = temp_c
                             dbg_parse(2, "soil_temp_%s=%s 0x%03x" %
                                       (sensor_num, temp_c, temp_raw))
@@ -1088,7 +882,7 @@ class Meteostick(object):
                             # soil moisture potential
                             # Lookup soil moisture potential in SM_MAP
                             norm_fact = 0.009  # Normalize potential_raw
-                            soil_moisture = lookup_potential(
+                            soil_moisture = Meteostick.lookup_potential(
                                 "soil_moisture", norm_fact,
                                 potential_raw, temp_c, SM_MAP)
                             data['soil_moisture_%s' % sensor_num] = soil_moisture
@@ -1101,7 +895,7 @@ class Meteostick(object):
                         # I 101 F2 2A 0 FF 40 C0 4F 5  -52 2687404 43 (no sensor)
                         if pkt[3] != 0xFF:
                             # leaf temperature
-                            temp_c = calculate_thermistor_temp(temp_raw)
+                            temp_c = Meteostick.calculate_thermistor_temp(temp_raw)
                             data['leaf_temp_%s' % sensor_num] = temp_c
                             dbg_parse(2, "leaf_temp_%s=%s 0x%03x" %
                                       (sensor_num, temp_c, temp_raw))
@@ -1109,7 +903,7 @@ class Meteostick(object):
                             # leaf wetness potential
                             # Lookup leaf wetness potential in LW_MAP
                             norm_fact = 0.0  # Do not normalize potential_raw
-                            leaf_wetness = lookup_potential(
+                            leaf_wetness = Meteostick.lookup_potential(
                                 "leaf_wetness", norm_fact,
                                 potential_raw, temp_c, LW_MAP)
                             data['leaf_wetness_%s' % sensor_num] = leaf_wetness
@@ -1273,6 +1067,79 @@ class Meteostick(object):
 
         return y + dy0 + (x - rx0) / float(rx1 - rx0) * (dy1 - dy0)
 
+    @staticmethod
+    def calculate_thermistor_temp(self, temp_raw):
+        """ Decode the raw thermistor temperature, then calculate the actual
+        thermistor temperature and the leaf_soil potential, using Davis' formulas.
+        see: https://github.com/cmatteri/CC1101-Weather-Receiver/wiki/Soil-Moisture-Station-Protocol
+        :param temp_raw: raw value from sensor for leaf wetness and soil moisture
+        """
+
+        # Convert temp_raw to a resistance (R) in kiloOhms
+        a = 18.81099
+        b = 0.0009988027
+        r = a / (1.0 / temp_raw - b) / 1000 # k ohms
+
+        # Steinhart-Hart parameters
+        s1 = 0.002783573
+        s2 = 0.0002509406
+        try:
+            thermistor_temp = 1 / (s1 + s2 * math.log(r)) - 273
+            dbg_parse(3, 'r (k ohm) %s temp_raw %s thermistor_temp %s' %
+                      (r, temp_raw, thermistor_temp))
+            return thermistor_temp
+        except ValueError, e:
+            logerr('thermistor_temp failed for temp_raw %s r (k ohm) %s'
+                   'error: %s' % (temp_raw, r, e))
+        return DEFAULT_SOIL_TEMP
+
+    @staticmethod
+    def lookup_potential(self, sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
+        """Look up potential based upon a normalized raw value (i.e. temp corrected
+        for DEFAULT_SOIL_TEMP) and a linear function between two points in the
+        lookup table.
+        :param lookup: a table with both sensor_raw_norm values and corresponding
+                       potential values. the table is composed for a specific
+                       norm-factor.
+        :param sensor_temp: sensor temp in C
+        :param sensor_raw: sensor raw potential value
+        :param norm_fact: temp correction factor for normalizing sensor-raw values
+        :param sensor_name: string used in debug messages
+        """
+
+        # normalize raw value for standard temperature (DEFAULT_SOIL_TEMP)
+        sensor_raw_norm = sensor_raw * (1 + norm_fact * (sensor_temp - DEFAULT_SOIL_TEMP))
+
+        numcols = len(lookup[RAW])
+        if sensor_raw_norm >= lookup[RAW][numcols - 1]:
+            potential = lookup[POT][numcols - 1] # preset potential to last value
+            dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s >= RAW=%s" %
+                      (sensor_name, sensor_temp, norm_fact, sensor_raw,
+                       sensor_raw_norm, potential, lookup[RAW][numcols - 1]))
+        else:
+            potential = lookup[POT][0] # preset potential to first value
+            # lookup sensor_raw_norm value in table
+            for x in range(0, numcols):
+                if sensor_raw_norm < lookup[RAW][x]:
+                    if x == 0:
+                        # 'pre zero' phase; potential = first value
+                        dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s < RAW=%s" %
+                                  (sensor_name, sensor_temp, norm_fact, sensor_raw,
+                                   sensor_raw_norm, potential, lookup[RAW][0]))
+                        break
+                    else:
+                        # determine the potential value
+                        potential_per_raw = (lookup[POT][x] - lookup[POT][x - 1]) / (lookup[RAW][x] - lookup[RAW][x - 1])
+                        potential_offset = (sensor_raw_norm - lookup[RAW][x - 1]) * potential_per_raw
+                        potential = lookup[POT][x - 1] + potential_offset
+                        dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s RAW=%s to %s POT=%s to %s " %
+                                  (sensor_name, sensor_temp, norm_fact, sensor_raw,
+                                   sensor_raw_norm, potential,
+                                   lookup[RAW][x - 1], lookup[RAW][x],
+                                   lookup[POT][x - 1], lookup[POT][x]))
+                        break
+        return potential
+
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     @property
@@ -1408,6 +1275,9 @@ if __name__ == '__main__':
     parser = optparse.OptionParser(usage=usage)
     parser.add_option('--version', dest='version', action='store_true',
                       help='display driver version')
+    parser.add_option('--station-type', dest='station_type', metavar='STATION_TYPE',
+                      help='station type, either vp2 or vue',
+                      default=Meteostick.DEFAULT_TYPE)
     parser.add_option('--port', dest='port', metavar='PORT',
                       help='serial port to which the station is connected',
                       default=Meteostick.DEFAULT_PORT)
@@ -1445,6 +1315,7 @@ if __name__ == '__main__':
                     leaf_soil_channel=int(opts.c_ls),
                     temp_hum_1_channel=int(opts.c_th1),
                     temp_hum_2_channel=int(opts.c_th2),
-                    rf_sensitivity=int(opts.rfs)) as s:
+                    rf_sensitivity=int(opts.rfs),
+                    station_type=opts.station_type) as s:
         while True:
             print time.time(), s.get_readings()
