@@ -308,6 +308,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                 loginf('WARNING: no data reveived for channel number %s' % ch)
 
         self.rf_stats['pctgood_total'] = int(float(received_total) / (received_total + missed_total) * 100.0 + 0.5)
+        dbg_parse(3, "received_total: %s, missed_total: %s, pctgood_total: %s"
+                  % (received_total, missed_total, self.rf_stats['pctgood_total']))
 
     def _report_rf_stats(self):
         logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.station.rfs)
