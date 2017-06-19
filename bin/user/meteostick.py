@@ -482,12 +482,9 @@ class Meteostick(object):
         # flush any previous data in the input buffer
         self.serial_port.flushInput()
 
-        # Send a reset command
-        self.serial_port.write('r\n')
-        time.sleep(1)
-        # the first one sometimes doesn't get through
-        self.serial_port.write('r\n')
-        time.sleep(1)
+        # Send reset command
+        self.send_command('r')
+        time.sleep(2)
 
         # Wait until we see the ? character
         start_ts = time.time()
