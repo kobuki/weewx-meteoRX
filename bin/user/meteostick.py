@@ -1069,7 +1069,7 @@ class Meteostick(object):
         return y + dy0 + (x - rx0) / float(rx1 - rx0) * (dy1 - dy0)
 
     @staticmethod
-    def calculate_thermistor_temp(self, temp_raw):
+    def calculate_thermistor_temp(temp_raw):
         """ Decode the raw thermistor temperature, then calculate the actual
         thermistor temperature and the leaf_soil potential, using Davis' formulas.
         see: https://github.com/cmatteri/CC1101-Weather-Receiver/wiki/Soil-Moisture-Station-Protocol
@@ -1095,7 +1095,7 @@ class Meteostick(object):
         return DEFAULT_SOIL_TEMP
 
     @staticmethod
-    def lookup_potential(self, sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
+    def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
         """Look up potential based upon a normalized raw value (i.e. temp corrected
         for DEFAULT_SOIL_TEMP) and a linear function between two points in the
         lookup table.
