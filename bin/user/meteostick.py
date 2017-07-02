@@ -35,8 +35,6 @@ supports the machine and raw formats.  The raw format provides more data and
 seems to result in higher quality readings, so it is the default.
 """
 
-# FIXME: eliminate the service component - there is no need to bind to events
-
 from __future__ import with_statement
 import math
 import serial
@@ -389,6 +387,9 @@ class Meteostick(object):
         self.rf_threshold = absrfs * 2
         loginf('using rf sensitivity %s (-%s dB)' % (rfs, absrfs))
 
+        self.intemp_corr = float(cfg.get('intemp_corr', 0))
+        loginf('using intemp_corr %f' % self.intemp_corr)
+
         channels = dict()  # channel name -> channel id mapping
         channels['iss'] = int(cfg.get('iss_channel', 1))
         channels['anemometer'] = int(cfg.get('anemometer_channel', 0))
@@ -571,8 +572,7 @@ class Meteostick(object):
             logerr("parse failed for '%s': %s" % (raw, e))
         return data
 
-    @staticmethod
-    def parse_raw(raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch, rain_per_tip, station_type):
+    def parse_raw(self, raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch, rain_per_tip, station_type):
         data = dict()
         parts = Meteostick.get_parts(raw)
         n = len(parts)
@@ -591,6 +591,11 @@ class Meteostick(object):
                     data['humidity_in'] = float(parts[7])  # only with custom receiver
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
+
+            if 'humidity_in' in data:
+                data['humidity_in'] = self.correct_rh_in(data['humidity_in'], data['temp_in'])
+            if 'temp_in' in data:
+                data['temp_in'] = self.correct_temp_in(data['temp_in'])
 
         elif parts[0] == 'I':
             # raw Davis sensor message in 8 byte format incl header and
@@ -910,6 +915,20 @@ class Meteostick(object):
             logerr("unknown sensor identifier '%s' in %s" % (parts[0], raw))
         return data
 
+    def correct_temp_in(self, temp):
+        t = temp + self.intemp_corr
+        logdbg("temp_in corrected to %f" % t)
+        return t
+
+    def correct_rh_in(self, rh, temp):
+        if self.intemp_corr != 0:
+            dp = 243.04 * (math.log(rh / 100.0) + ((17.625 * temp) / (243.04 + temp))) /\
+                 (17.625 - math.log(rh / 100.0) - ((17.625 * temp) / (243.04 + temp)))
+            t = temp + self.intemp_corr
+            h = 100 * (math.exp((17.625 * dp) / (243.04 + dp)) / math.exp((17.625 * t) / (243.04 + t)))
+            logdbg("temp_rh corrected to %f" % h)
+            return h
+
     # Normalize and interpolate raw wind values at raw angles
     @staticmethod
     def calc_wind_speed_ec(raw_mph, raw_angle):
@@ -1042,7 +1061,7 @@ class Meteostick(object):
                     y0, y1,
                     x, y):
 
-        dbg_parse(2, "rx0=%s, rx1=%s, ry0=%s, ry1=%s, x0=%s, x1=%s, y0=%s, y1=%s, x=%s, y=%s" %
+        logdbg("rx0=%s, rx1=%s, ry0=%s, ry1=%s, x0=%s, x1=%s, y0=%s, y1=%s, x=%s, y=%s" %
                   (rx0, rx1, ry0, ry1, x0, x1, y0, y1, x, y))
 
         if rx0 == rx1:
