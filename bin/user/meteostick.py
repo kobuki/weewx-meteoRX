@@ -592,10 +592,11 @@ class Meteostick(object):
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
 
-            if 'humidity_in' in data:
-                data['humidity_in'] = self.correct_rh_in(data['humidity_in'], data['temp_in'])
-            if 'temp_in' in data:
-                data['temp_in'] = self.correct_temp_in(data['temp_in'])
+            if self.intemp_corr != 0:
+                if 'humidity_in' in data:
+                    data['humidity_in'] = self.correct_rh_in(data['humidity_in'], data['temp_in'])
+                if 'temp_in' in data:
+                    data['temp_in'] = self.correct_temp_in(data['temp_in'])
 
         elif parts[0] == 'I':
             # raw Davis sensor message in 8 byte format incl header and
@@ -921,13 +922,12 @@ class Meteostick(object):
         return t
 
     def correct_rh_in(self, rh, temp):
-        if self.intemp_corr != 0:
-            dp = 243.04 * (math.log(rh / 100.0) + ((17.625 * temp) / (243.04 + temp))) /\
-                 (17.625 - math.log(rh / 100.0) - ((17.625 * temp) / (243.04 + temp)))
-            t = temp + self.intemp_corr
-            h = 100 * (math.exp((17.625 * dp) / (243.04 + dp)) / math.exp((17.625 * t) / (243.04 + t)))
-            logdbg("temp_rh corrected to %f" % h)
-            return h
+        dp = 243.04 * (math.log(rh / 100.0) + ((17.625 * temp) / (243.04 + temp))) /\
+             (17.625 - math.log(rh / 100.0) - ((17.625 * temp) / (243.04 + temp)))
+        t = temp + self.intemp_corr
+        h = 100 * (math.exp((17.625 * dp) / (243.04 + dp)) / math.exp((17.625 * t) / (243.04 + t)))
+        logdbg("temp_rh corrected to %f" % h)
+        return h
 
     # Normalize and interpolate raw wind values at raw angles
     @staticmethod
