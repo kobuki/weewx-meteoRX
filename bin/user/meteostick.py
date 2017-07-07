@@ -49,7 +49,7 @@ import weewx.wxformulas
 import weewx.units
 from weewx.crc16 import crc16
 
-DRIVER_NAME = 'Meteostick'
+DRIVER_NAME = 'WxReceiver'
 DRIVER_VERSION = '0.49'
 
 DEBUG_SERIAL = 0
@@ -138,7 +138,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         # To use a rainRate calculation from this driver that closely matches
         # that of a Davis station, uncomment the rainRate field then specify
         # rainRate = hardware in section [StdWXCalculate] of weewx.conf
-        # 'rainRate': 'rain_rate',
+        'rainRate': 'rain_rate',
         'radiation': 'solar_radiation',
         'UV': 'uv',
         'rxCheckPercent': 'pct_good',
@@ -917,17 +917,17 @@ class Meteostick(object):
         return data
 
     def correct_temp_in(self, temp):
-        t = temp + self.intemp_corr
-        logdbg("temp_in corrected to %f" % t)
-        return t
+        new_temp = temp + self.intemp_corr
+        logdbg("correct_temp_in: old_temp: %f, new_temp: %f" % (temp, new_temp))
+        return new_temp
 
     def correct_rh_in(self, rh, temp):
         dp = 243.04 * (math.log(rh / 100.0) + ((17.625 * temp) / (243.04 + temp))) /\
              (17.625 - math.log(rh / 100.0) - ((17.625 * temp) / (243.04 + temp)))
-        t = temp + self.intemp_corr
-        h = 100 * (math.exp((17.625 * dp) / (243.04 + dp)) / math.exp((17.625 * t) / (243.04 + t)))
-        logdbg("temp_rh corrected to %f" % h)
-        return h
+        new_temp = temp + self.intemp_corr
+        new_rh = 100 * (math.exp((17.625 * dp) / (243.04 + dp)) / math.exp((17.625 * new_temp) / (243.04 + new_temp)))
+        logdbg("correct_rh_in: old_temp: %f, new_temp: %f, old_rh: %f, new_rh: %f" % (temp, new_temp, rh, new_rh))
+        return new_rh
 
     # Normalize and interpolate raw wind values at raw angles
     @staticmethod
@@ -1062,7 +1062,7 @@ class Meteostick(object):
                     x, y):
 
         logdbg("rx0=%s, rx1=%s, ry0=%s, ry1=%s, x0=%s, x1=%s, y0=%s, y1=%s, x=%s, y=%s" %
-                  (rx0, rx1, ry0, ry1, x0, x1, y0, y1, x, y))
+               (rx0, rx1, ry0, ry1, x0, x1, y0, y1, x, y))
 
         if rx0 == rx1:
             return y + x0 + (y - ry0) / float(ry1 - ry0) * (y1 - y0)
