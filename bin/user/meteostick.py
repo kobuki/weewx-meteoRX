@@ -358,7 +358,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
 
 class Meteostick(object):
     DEFAULT_PORT = '/dev/ttyUSB0'
-    DEFAULT_TYPE = 'vp2'
+    DEFAULT_STATION_TYPE = 'vp2'
     DEFAULT_BAUDRATE = 115200
     DEFAULT_FREQUENCY = 'EU'
     DEFAULT_RF_SENSITIVITY = 90
@@ -368,7 +368,7 @@ class Meteostick(object):
         self.port = cfg.get('port', self.DEFAULT_PORT)
         loginf('using serial port %s' % self.port)
 
-        self.station_type = cfg.get('station_type', self.DEFAULT_TYPE)
+        self.station_type = cfg.get('station_type', self.DEFAULT_STATION_TYPE)
         loginf('using station type %s' % self.station_type)
 
         self.baudrate = cfg.get('baudrate', self.DEFAULT_BAUDRATE)
@@ -1055,6 +1055,8 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         print "Specify the frequency between the station and the meteostick,"
         print "one of US (915 MHz), EU (868.3 MHz), or AU (915 MHz)"
         settings['transceiver_frequency'] = self._prompt('frequency', 'EU', ['US', 'EU', 'AU'])
+        print "Specify the type of the station (vp2 or vue)"
+        settings['station_type'] = self._prompt('station_type', Meteostick.DEFAULT_STATION_TYPE, ['vp2', 'vue'])
         print "Specify the type of the rain bucket,"
         print "either 0 (0.01 inches per tip) or 1 (0.2 mm per tip)"
         settings['rain_bucket_type'] = self._prompt('rain_bucket_type', MeteostickDriver.DEFAULT_RAIN_BUCKET_TYPE)
@@ -1105,9 +1107,6 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         _parser.add_option(
             "--set-channel", dest="channel", metavar="X", type=int,
             help="set channel: 0-255; default 255")
-        _parser.add_option(
-            "--set-format", dest="format", metavar="X", type=int,
-            help="set format: 0=raw, 1=machine, 2=human")
 
     def do_options(self, options, _parser, config_dict, prompt):
         driver = MeteostickDriver(None, config_dict)
@@ -1150,7 +1149,7 @@ if __name__ == '__main__':
                       help='display driver version')
     parser.add_option('--station-type', dest='station_type', metavar='STATION_TYPE',
                       help='station type, either vp2 or vue',
-                      default=Meteostick.DEFAULT_TYPE)
+                      default=Meteostick.DEFAULT_STATION_TYPE)
     parser.add_option('--port', dest='port', metavar='PORT',
                       help='serial port to which the station is connected',
                       default=Meteostick.DEFAULT_PORT)
