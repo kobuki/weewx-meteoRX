@@ -310,7 +310,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                 self.rf_stats['pctgood'][ch] = None
                 loginf('WARNING: no data reveived for channel number %s' % ch)
 
-        self.rf_stats['pctgood_total'] = int(float(received_total) / (received_total + missed_total) * 100.0 + 0.5)
+        self.rf_stats['pctgood_total'] = int(float(received_total) / (received_total + missed_total) * 100.0 + 0.5) \
+            if received_total + missed_total > 0 else 0
         dbg_parse(3, "received_total: %s, missed_total: %s, pctgood_total: %s"
                   % (received_total, missed_total, self.rf_stats['pctgood_total']))
 
@@ -798,7 +799,7 @@ class Meteostick(object):
                         else:
                             data['temperature'] = temp_c
                 elif message_type == 9:
-                    # 10-min average wind gust
+                    # 10-min wind gust
                     # message examples:
                     # I 102 91 0 DB 0 3 E 89 85  -66 2624972 204
                     # I 102 90 0 0 0 5 0 31 51  -75 2562456 223 (no sensor)
