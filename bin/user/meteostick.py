@@ -51,7 +51,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '20170713.test'
+DRIVER_VERSION = '2017091301.test'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -527,9 +527,11 @@ class Meteostick(object):
         # Filter transmissions from anything other than configured transmitters
         self.send_command('f1')
 
-        # Set device to produce raw data
-        command = 'o0'
-        self.send_command(command)
+        # Enable repeater pass-through to be able to capture repeater packets
+        self.send_command('r1')
+
+        # Set device to produce 10-byte raw data
+        self.send_command('o3')
 
         # Set the frequency. Valid frequencies are US, EU and AU
         command = 'm0'  # default to US
@@ -612,17 +614,25 @@ class Meteostick(object):
             # message example:
             #       ---- raw message ----  rfs ts_last
             # I 102 51 0 DB FF 73 0 11 41  -65 5249944 202
-            raw_msg = [0] * 8
-            for i in xrange(0, 8):
+            raw_msg = [0] * 10
+
+            for i in xrange(0, 10):
                 raw_msg[i] = chr(int(parts[i + 2], 16))
-            Meteostick._check_crc(raw_msg)
-            for i in xrange(0, 8):
+
+            if raw_msg[8] != '\xff' and raw_msg[9] != '\xff':
+                # repeater present, swap bytes for crc processing
+                raw_msg[6:8], raw_msg[8:10] = raw_msg[8:10], raw_msg[6:8]
+                Meteostick._check_crc(raw_msg)
+            else:
+                Meteostick._check_crc(raw_msg[:8])
+
+            for i in xrange(0, 10):
                 raw_msg[i] = parts[i + 2]
             pkt = bytearray([int(i, base=16) for i in raw_msg])
             data['channel'] = (pkt[0] & 0x7) + 1
             battery_low = (pkt[0] >> 3) & 0x1
-            data['rf_signal'] = int(parts[11])
-            time_since_last = int(parts[12])
+            data['rf_signal'] = int(parts[13])
+            time_since_last = int(parts[14])
             packet_delay = (41 + data['channel'] - 1) / 16.0 * 1000000
             rf_missed = int(time_since_last / packet_delay + 0.5) - 1
             data['rf_missed'] = rf_missed if rf_missed >= 0 else 0  # startup packet delays can be small causing -1 here
