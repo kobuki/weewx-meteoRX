@@ -15,5 +15,5 @@ class MeteostickInstaller(ExtensionInstaller):
             description='Collect data from meteostick via serial port',
             author="Matthew Wall",
             author_email="mwall@users.sourceforge.net",
-            files=[('bin/user', ['bin/user/meteostick.py'])]
+            files=[('bin/user', ['bin/user/meteostick.py', 'bin/user/windcal.dat'])]
             )

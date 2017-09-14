@@ -104,6 +104,7 @@ def _fmt(data):
         return ''
     return ' '.join(['%02x' % ord(x) for x in data])
 
+
 # default temperature for soil moisture and leaf wetness sensors that
 # do not have a temperature sensor.
 # Also used to normalize raw values for a standard temperature.
@@ -1147,6 +1148,7 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
 # engine and service overhead.  invoke this as follows from the weewx root dir:
 #
 # PYTHONPATH=bin python bin/user/meteostick.py
+
 
 if __name__ == '__main__':
     import optparse
