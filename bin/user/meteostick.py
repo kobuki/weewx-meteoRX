@@ -365,6 +365,7 @@ class Meteostick(object):
     DEFAULT_FREQUENCY = 'EU'
     DEFAULT_RF_SENSITIVITY = 90
     MAX_RF_SENSITIVITY = 125
+    SPIKE_DIFFERENCE = 50
 
     def __init__(self, **cfg):
         self.port = cfg.get('port', self.DEFAULT_PORT)
@@ -398,6 +399,7 @@ class Meteostick(object):
         self.windcal_tab = bytearray(windcal_file.read())
         windcal_file.close()
         loginf('using wind calibration file %s' % windcal_filename)
+        self.lastWindRaw = -1  # for wind gust spike filtering
 
         channels = dict()  # channel name -> channel id mapping
         channels['iss'] = int(cfg.get('iss_channel', 1))
@@ -657,6 +659,11 @@ class Meteostick(object):
                 # I 101 51 6 B2 FF 73 0 76 61  -69 2624964 59
                 # I 101 E0 0 0 4E 5 0 72 61  -68 2562440 68 (no sensor)
                 wind_speed_raw = pkt[1]
+                # filter occasional raw wind speed spikes
+                if self.lastWindRaw != -1 and abs(self.lastWindRaw - wind_speed_raw) >= self.SPIKE_DIFFERENCE:
+                    wind_speed_raw = self.lastWindRaw
+                self.lastWindRaw = wind_speed_raw
+
                 wind_dir_raw = pkt[2]
                 if not (wind_speed_raw == 0 and wind_dir_raw == 0):
                     """ The Vantage Pro and Pro2 stations measure
