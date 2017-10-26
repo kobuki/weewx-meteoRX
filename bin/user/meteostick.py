@@ -37,6 +37,8 @@ seems to result in higher quality readings, so it is the default.
 
 from __future__ import with_statement
 import math
+import traceback
+
 import serial
 import string
 import syslog
@@ -581,7 +583,8 @@ class Meteostick(object):
                                   self.channels['temp_hum_2'],
                                   rain_per_tip,
                                   self.station_type)
-        except ValueError, e:
+        except (ValueError, IndexError) as e:
+            traceback.print_exc()
             logerr("parse failed for '%s': %s" % (raw, e))
         return data
 
