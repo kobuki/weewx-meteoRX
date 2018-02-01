@@ -2,7 +2,7 @@
 
 ### About this Repository
 
-This repository is a fork of [https://github.com/matthewwall/weewx-meteostick](https://github.com/matthewwall/weewx-meteostick) for use with custom receiver modules. It has been modified and fixed in numerous ways to better support these custom receivers. It strives to maintain compatibility with the Meteostick driver as much as possible and should be compatible with either the custom receiver or the one in the [https://github.com/kobuki/VPTools](https://github.com/kobuki/VPTools) repo.  
+This repository is a fork of [https://github.com/matthewwall/weewx-meteostick](https://github.com/matthewwall/weewx-meteostick) for use with custom receiver modules. It has been modified and fixed in numerous ways to better support these custom receivers. It strives to maintain compatibility with the Meteostick driver as much as possible and should be compatible with either the custom receiver or the one described in the [https://github.com/kobuki/VPTools](https://github.com/kobuki/VPTools) repo.  
 
 
 ### Installation
