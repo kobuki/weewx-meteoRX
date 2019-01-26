@@ -802,7 +802,8 @@ class Meteostick(object):
                     temp_raw = (pkt[3] << 4) + (pkt[4] >> 4)  # 12-bits temp value
                     if temp_raw != 0xFFC:
                         if pkt[4] & 0x8:
-                            # digital temp sensor
+                            # digital temp sensor - value is twos-complement
+                            temp_raw = -(temp_raw ^ 0xFFF) if pkt[3] & 0x80 else temp_raw
                             temp_f = temp_raw / 10.0
                             temp_c = weewx.wxformulas.FtoC(temp_f)  # C
                             dbg_parse(2, "digital temp_raw=0x%03x temp_f=%s temp_c=%s"
