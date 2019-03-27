@@ -51,6 +51,7 @@ import weewx.engine
 import weewx.wxformulas
 import weewx.units
 from weewx.crc16 import crc16
+from future.utils import iteritems
 
 DRIVER_NAME = 'Meteostick'
 DRIVER_VERSION = '2017091301.test'
@@ -321,7 +322,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
     def _report_rf_stats(self):
         logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.station.rfs)
         logdbg("Station           max   min   avg   last  count [missed] [good]")
-        for name, chid in self.station.channels.iteritems():
+        for name, chid in iteritems(self.station.channels):
             if chid != 0:
                 self._report_channel(name, chid)
 
@@ -411,7 +412,7 @@ class Meteostick(object):
         channels['temp_hum_2'] = int(cfg.get('temp_hum_2_channel', 0))
         self.channels = channels
         idmap = dict()  # channel id -> channel name mapping
-        for name, chid in channels.iteritems():
+        for name, chid in iteritems(channels):
             if chid != 0:
                 idmap[chid] = name
         self.idmap = idmap
@@ -476,7 +477,7 @@ class Meteostick(object):
         for ntries in range(0, max_tries):
             try:
                 return self.get_readings()
-            except serial.serialutil.SerialException, e:
+            except serial.serialutil.SerialException as e:
                 loginf("Failed attempt %d of %d to get readings: %s" % (ntries + 1, max_tries, e))
                 time.sleep(retry_wait)
         else:
@@ -622,7 +623,7 @@ class Meteostick(object):
             # I 102 51 0 DB FF 73 0 11 41  -65 5249944 202
             raw_msg = [0] * 10
 
-            for i in xrange(0, 10):
+            for i in range(0, 10):
                 raw_msg[i] = chr(int(parts[i + 2], 16))
 
             if raw_msg[8] != '\xff' and raw_msg[9] != '\xff':
@@ -632,7 +633,7 @@ class Meteostick(object):
             else:
                 Meteostick._check_crc(raw_msg[:8])
 
-            for i in xrange(0, 10):
+            for i in range(0, 10):
                 raw_msg[i] = parts[i + 2]
             pkt = bytearray([int(i, base=16) for i in raw_msg])
             data['channel'] = (pkt[0] & 0x7) + 1
@@ -984,7 +985,7 @@ class Meteostick(object):
             dbg_parse(3, 'r (k ohm) %s temp_raw %s thermistor_temp %s' %
                       (r, temp_raw, thermistor_temp))
             return thermistor_temp
-        except ValueError, e:
+        except ValueError as e:
             logerr('thermistor_temp failed for temp_raw %s r (k ohm) %s'
                    'error: %s' % (temp_raw, r, e))
         return DEFAULT_SOIL_TEMP
@@ -1072,26 +1073,26 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
 
     def prompt_for_settings(self):
         settings = dict()
-        print "Specify the serial port on which the meteostick is connected,"
-        print "for example /dev/ttyUSB0 or /dev/ttyS0"
+        print("Specify the serial port on which the meteostick is connected,")
+        print("for example /dev/ttyUSB0 or /dev/ttyS0")
         settings['port'] = self._prompt('port', Meteostick.DEFAULT_PORT)
-        print "Specify the frequency between the station and the meteostick,"
-        print "one of US (915 MHz), EU (868.3 MHz), or AU (915 MHz)"
+        print("Specify the frequency between the station and the meteostick,")
+        print("one of US (915 MHz), EU (868.3 MHz), or AU (915 MHz)")
         settings['transceiver_frequency'] = self._prompt('frequency', 'EU', ['US', 'EU', 'AU'])
-        print "Specify the type of the station (vp2 or vue)"
+        print("Specify the type of the station (vp2 or vue)")
         settings['station_type'] = self._prompt('station_type', Meteostick.DEFAULT_STATION_TYPE, ['vp2', 'vue'])
-        print "Specify the type of the rain bucket,"
-        print "either 0 (0.01 inches per tip) or 1 (0.2 mm per tip)"
+        print("Specify the type of the rain bucket,")
+        print("either 0 (0.01 inches per tip) or 1 (0.2 mm per tip)")
         settings['rain_bucket_type'] = self._prompt('rain_bucket_type', MeteostickDriver.DEFAULT_RAIN_BUCKET_TYPE)
-        print "Specify the channel of the ISS (1-8)"
+        print("Specify the channel of the ISS (1-8)")
         settings['iss_channel'] = self._prompt('iss_channel', 1)
-        print "Specify the channel of the Anemometer Transmitter Kit (0=none; 1-8)"
+        print("Specify the channel of the Anemometer Transmitter Kit (0=none; 1-8)")
         settings['anemometer_channel'] = self._prompt('anemometer_channel', 0)
-        print "Specify the channel of the Leaf & Soil station (0=none; 1-8)"
+        print("Specify the channel of the Leaf & Soil station (0=none; 1-8)")
         settings['leaf_soil_channel'] = self._prompt('leaf_soil_channel', 0)
-        print "Specify the channel of the first Temp/Humidity station (0=none; 1-8)"
+        print("Specify the channel of the first Temp/Humidity station (0=none; 1-8)")
         settings['temp_hum_1_channel'] = self._prompt('temp_hum_1_channel', 0)
-        print "Specify the channel of the second Temp/Humidity station (0=none; 1-8)"
+        print("Specify the channel of the second Temp/Humidity station (0=none; 1-8)")
         settings['temp_hum_2_channel'] = self._prompt('temp_hum_2_channel', 0)
         return settings
 
@@ -1135,7 +1136,7 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         driver = MeteostickDriver(None, config_dict)
         info = driver.station.reset()
         if options.info:
-            print info
+            print(info)
         cfg = {
             'v': options.verbose,
             'd': options.debug,
@@ -1148,11 +1149,11 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         for opt in cfg:
             if cfg[opt]:
                 cmd = opt + cfg[opt]
-                print "set station parameter %s" % cmd
+                print("set station parameter %s" % cmd)
                 driver.station.send_command(cmd)
         if options.opts:
             response = driver.station.send_command('?')
-            print response
+            print(response)
         driver.closePort()
 
 # define a main entry point for basic testing of the station without weewx
@@ -1201,7 +1202,7 @@ if __name__ == '__main__':
     (opts, args) = parser.parse_args()
 
     if opts.version:
-        print "meteostick driver version %s" % DRIVER_VERSION
+        print("meteostick driver version %s" % DRIVER_VERSION)
         exit(0)
 
     with Meteostick(port=opts.port, baudrate=opts.baud,
@@ -1214,4 +1215,4 @@ if __name__ == '__main__':
                     rf_sensitivity=int(opts.rfs),
                     station_type=opts.station_type) as s:
         while True:
-            print time.time(), s.get_readings()
+            print(time.time(), s.get_readings())
