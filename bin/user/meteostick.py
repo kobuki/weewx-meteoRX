@@ -54,7 +54,7 @@ from weewx.crc16 import crc16
 from future.utils import iteritems
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2019032701.test'
+DRIVER_VERSION = '2019110401.test'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -410,6 +410,7 @@ class Meteostick(object):
         channels['leaf_soil'] = int(cfg.get('leaf_soil_channel', 0))
         channels['temp_hum_1'] = int(cfg.get('temp_hum_1_channel', 0))
         channels['temp_hum_2'] = int(cfg.get('temp_hum_2_channel', 0))
+        channels['solar'] = int(cfg.get('solar_channel', 0))
         self.channels = channels
         idmap = dict()  # channel id -> channel name mapping
         for name, chid in iteritems(channels):
@@ -421,28 +422,30 @@ class Meteostick(object):
         loginf('using leaf_soil_channel %s' % channels['leaf_soil'])
         loginf('using temp_hum_1_channel %s' % channels['temp_hum_1'])
         loginf('using temp_hum_2_channel %s' % channels['temp_hum_2'])
+        loginf('using solar_channel %s' % channels['solar'])
 
         self.transmitters = Meteostick.ch_to_xmit(
             channels['iss'], channels['anemometer'], channels['leaf_soil'],
-            channels['temp_hum_1'], channels['temp_hum_2'])
+            channels['temp_hum_1'], channels['temp_hum_2'], channels['solar'])
         loginf('using transmitters %02x' % self.transmitters)
 
         self.timeout = 3  # seconds
-        self.serial_port = None
 
     @staticmethod
     def ch_to_xmit(iss_channel, anemometer_channel, leaf_soil_channel,
-                   temp_hum_1_channel, temp_hum_2_channel):
+                   temp_hum_1_channel, temp_hum_2_channel, solar_channel):
         transmitters = 0
-        transmitters += 1 << (iss_channel - 1)
+        transmitters |= 1 << (iss_channel - 1)
         if anemometer_channel != 0:
-            transmitters += 1 << (anemometer_channel - 1)
+            transmitters |= 1 << (anemometer_channel - 1)
         if leaf_soil_channel != 0:
-            transmitters += 1 << (leaf_soil_channel - 1)
+            transmitters |= 1 << (leaf_soil_channel - 1)
         if temp_hum_1_channel != 0:
-            transmitters += 1 << (temp_hum_1_channel - 1)
+            transmitters |= 1 << (temp_hum_1_channel - 1)
         if temp_hum_2_channel != 0:
-            transmitters += 1 << (temp_hum_2_channel - 1)
+            transmitters |= 1 << (temp_hum_2_channel - 1)
+        if solar_channel != 0:
+            transmitters |= 1 << (solar_channel - 1)
         return transmitters
 
     @staticmethod
@@ -582,6 +585,7 @@ class Meteostick(object):
                                   self.channels['leaf_soil'],
                                   self.channels['temp_hum_1'],
                                   self.channels['temp_hum_2'],
+                                  self.channels['solar'],
                                   rain_per_tip,
                                   self.station_type)
         except (ValueError, IndexError) as e:
@@ -589,7 +593,7 @@ class Meteostick(object):
             logerr("parse failed for '%s': %s" % (raw, e))
         return data
 
-    def parse_raw(self, raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch, rain_per_tip, station_type):
+    def parse_raw(self, raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch, solar_ch, rain_per_tip, station_type):
         data = dict()
         parts = Meteostick.get_parts(raw)
         n = len(parts)
@@ -647,7 +651,7 @@ class Meteostick(object):
                 dbg_parse(3, "channel %s missed %s" % (data['channel'], data['rf_missed']))
 
             if data['channel'] == iss_ch or data['channel'] == wind_ch \
-                    or data['channel'] == th1_ch or data['channel'] == th2_ch:
+                    or data['channel'] == th1_ch or data['channel'] == th2_ch or data['channel'] == solar_ch:
                 if data['channel'] == iss_ch:
                     data['bat_iss'] = battery_low
                 elif data['channel'] == wind_ch:
@@ -770,7 +774,8 @@ class Meteostick(object):
                             dbg_parse(2, "light_rain=%s mm/h, time_between_tips=%s s" %
                                       (rain_rate, time_between_tips))
                         data['rain_rate'] = rain_rate
-                elif message_type == 6:
+                # must check solar_ch separately here because of flawed station separation logic
+                elif message_type == 6 and data['channel'] == solar_ch:
                     # solar radiation
                     # message examples
                     # I 104 61 0 DB 0 43 0 F4 3B  -66 2624972 121
@@ -1094,6 +1099,8 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         settings['temp_hum_1_channel'] = self._prompt('temp_hum_1_channel', 0)
         print("Specify the channel of the second Temp/Humidity station (0=none; 1-8)")
         settings['temp_hum_2_channel'] = self._prompt('temp_hum_2_channel', 0)
+        print("Specify the channel for solar radiation")
+        settings['solar_channel'] = self._prompt('solar_channel', 0)
         return settings
 
 
@@ -1199,6 +1206,8 @@ if __name__ == '__main__':
                       help='channel for T/H sensor 1', default=0)
     parser.add_option('--th2-channel', dest='c_th2', metavar='TH2_CHANNEL',
                       help='channel for T/H sensor 2', default=0)
+    parser.add_option('--solar-channel', dest='c_solar', metavar='SOLAR_CHANNEL',
+                      help='channel for solar sensor', default=0)
     (opts, args) = parser.parse_args()
 
     if opts.version:
@@ -1213,6 +1222,7 @@ if __name__ == '__main__':
                     temp_hum_1_channel=int(opts.c_th1),
                     temp_hum_2_channel=int(opts.c_th2),
                     rf_sensitivity=int(opts.rfs),
-                    station_type=opts.station_type) as s:
+                    station_type=opts.station_type,
+                    solar_channel=int(opts.c_solar)) as s:
         while True:
             print(time.time(), s.get_readings())
