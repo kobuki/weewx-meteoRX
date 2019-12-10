@@ -54,7 +54,7 @@ from weewx.crc16 import crc16
 from future.utils import iteritems
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2019110601.test'
+DRIVER_VERSION = '2019121001.test'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -867,8 +867,9 @@ class Meteostick(object):
                     """We have seen rain counters wrap around at 127 and
                     others wrap around at 255.  When we filter the highest
                     bit, both counter types will wrap at 127.
+                    pkt[5] == 0 is an extra check for bogus packets that pass CRC checks
                     """
-                    if rain_count_raw != 0x80:
+                    if rain_count_raw != 0x80 and pkt[5] == 0:
                         rain_count = rain_count_raw & 0x7F  # skip high bit
                         data['rain_count'] = rain_count
                         dbg_parse(2, "rain_count_raw=0x%02x value=%s" %
