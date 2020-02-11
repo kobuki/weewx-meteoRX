@@ -54,7 +54,7 @@ from weewx.crc16 import crc16
 from future.utils import iteritems
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2020021101'
+DRIVER_VERSION = '2020021102'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -368,7 +368,8 @@ class Meteostick(object):
     DEFAULT_FREQUENCY = 'EU'
     DEFAULT_RF_SENSITIVITY = 90
     MAX_RF_SENSITIVITY = 125
-    SPIKE_DIFFERENCE = 40
+    SPIKE_DIFFERENCE = 40  # currently unused
+    SPIKE_RATIO = 3.0
 
     def __init__(self, **cfg):
         self.port = cfg.get('port', self.DEFAULT_PORT)
@@ -677,10 +678,10 @@ class Meteostick(object):
                               (wind_speed_raw, wind_dir_raw))
 
                     # filter occasional raw wind speed spikes
-                    if self.lastWindRaw != -1 and wind_speed_raw - self.lastWindRaw >= self.SPIKE_DIFFERENCE:
+                    if self.lastWindRaw != -1 and wind_speed_raw >= self.lastWindRaw * self.SPIKE_RATIO:
                         self.lastWindRaw = -1
                         loginf("wind speed spiked over limit, ignoring wind data: %s/%s" %
-                               (wind_speed_raw - self.lastWindRaw, self.SPIKE_DIFFERENCE))
+                               (wind_speed_raw, self.lastWindRaw))
                     else:
                         self.lastWindRaw = wind_speed_raw
 
