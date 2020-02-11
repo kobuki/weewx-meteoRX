@@ -368,7 +368,7 @@ class Meteostick(object):
     DEFAULT_FREQUENCY = 'EU'
     DEFAULT_RF_SENSITIVITY = 90
     MAX_RF_SENSITIVITY = 125
-    SPIKE_DIFFERENCE = 25
+    SPIKE_DIFFERENCE = 40
 
     def __init__(self, **cfg):
         self.port = cfg.get('port', self.DEFAULT_PORT)
