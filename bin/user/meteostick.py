@@ -663,11 +663,6 @@ class Meteostick(object):
                 # I 101 51 6 B2 FF 73 0 76 61  -69 2624964 59
                 # I 101 E0 0 0 4E 5 0 72 61  -68 2562440 68 (no sensor)
                 wind_speed_raw = pkt[1]
-                # filter occasional raw wind speed spikes
-                if self.lastWindRaw != -1 and abs(self.lastWindRaw - wind_speed_raw) >= self.SPIKE_DIFFERENCE:
-                    wind_speed_raw = self.lastWindRaw
-                self.lastWindRaw = wind_speed_raw
-
                 wind_dir_raw = pkt[2]
                 if not (wind_speed_raw == 0 and wind_dir_raw == 0):
                     """ The Vantage Pro and Pro2 stations measure
@@ -681,33 +676,41 @@ class Meteostick(object):
                     dbg_parse(2, "wind_speed_raw=%03x wind_dir_raw=0x%03x" %
                               (wind_speed_raw, wind_dir_raw))
 
-                    # Vantage Pro and Pro2
-                    if wind_dir_raw == 0:
-                        wind_dir_pro = 360.0
-                    elif wind_dir_raw == 255:
-                        wind_dir_pro = 355.0
+                    # filter occasional raw wind speed spikes
+                    if self.lastWindRaw != -1 and wind_speed_raw - self.lastWindRaw >= self.SPIKE_DIFFERENCE:
+                        self.lastWindRaw = -1
+                        loginf("wind speed spiked over limit, ignoring wind data: %s/%s" %
+                               (wind_speed_raw - self.lastWindRaw, self.SPIKE_DIFFERENCE))
                     else:
-                        wind_dir_pro = 9.0 + (wind_dir_raw - 1) * 341.0 / 253.0
+                        self.lastWindRaw = wind_speed_raw
 
-                    # Vantage Vue
-                    wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
+                        # Vantage Pro and Pro2
+                        if wind_dir_raw == 0:
+                            wind_dir_pro = 360.0
+                        elif wind_dir_raw == 255:
+                            wind_dir_pro = 355.0
+                        else:
+                            wind_dir_pro = 9.0 + (wind_dir_raw - 1) * 341.0 / 253.0
 
-                    # wind error correction is by raw byte values
-                    wind_speed_ec = round(self.calc_wind_speed_ec(wind_speed_raw, wind_dir_raw))
+                        # Vantage Vue
+                        wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
 
-                    data['wind_speed_ec'] = wind_speed_ec
-                    data['wind_speed_raw'] = wind_speed_raw
+                        # wind error correction is by raw byte values
+                        wind_speed_ec = round(self.calc_wind_speed_ec(wind_speed_raw, wind_dir_raw))
 
-                    if station_type == 'vp2':
-                        data['wind_dir'] = wind_dir_pro
-                        data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
-                    else:
-                        data['wind_dir'] = wind_dir_vue
-                        data['wind_speed'] = wind_speed_raw * MPH_TO_MPS
+                        data['wind_speed_ec'] = wind_speed_ec
+                        data['wind_speed_raw'] = wind_speed_raw
 
-                    dbg_parse(2, "WS=%s WD=%s WS_raw=%s WS_ec=%s WD_raw=%s WD_pro=%s WD_vue=%s" %
-                              (data['wind_speed'], data['wind_dir'],
-                               wind_speed_raw, wind_speed_ec, wind_dir_raw, wind_dir_pro, wind_dir_vue))
+                        if station_type == 'vp2':
+                            data['wind_dir'] = wind_dir_pro
+                            data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
+                        else:
+                            data['wind_dir'] = wind_dir_vue
+                            data['wind_speed'] = wind_speed_raw * MPH_TO_MPS
+
+                        dbg_parse(2, "WS=%s WD=%s WS_raw=%s WS_ec=%s WD_raw=%s WD_pro=%s WD_vue=%s" %
+                                  (data['wind_speed'], data['wind_dir'],
+                                   wind_speed_raw, wind_speed_ec, wind_dir_raw, wind_dir_pro, wind_dir_vue))
 
                 # data from both iss sensors and extra sensors on
                 # Anemometer Transport Kit
