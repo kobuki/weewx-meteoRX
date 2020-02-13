@@ -681,7 +681,7 @@ class Meteostick(object):
                     # filter occasional raw wind speed spikes
                     if self.lastWindRaw != -1 \
                             and wind_speed_raw > self.SPIKE_THRESHOLD \
-                            and wind_speed_raw >= self.lastWindRaw * self.SPIKE_RATIO:
+                            and wind_speed_raw > self.lastWindRaw * self.SPIKE_RATIO:
                         self.lastWindRaw = -1
                         loginf("wind speed spiked over limit, ignoring wind data: %s/%s" %
                                (wind_speed_raw, self.lastWindRaw))
