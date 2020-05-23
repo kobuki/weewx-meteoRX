@@ -63,6 +63,10 @@ DEBUG_RFS = 0
 
 MPH_TO_MPS = 1609.34 / 3600.0  # meter/mile * hour/second
 
+if weewx.__version__ >= '4':
+    import logging
+    logger = logging.getLogger(__name__)
+
 
 def loader(config_dict, engine):
     return MeteostickDriver(engine, config_dict)
@@ -77,7 +81,11 @@ def configurator_loader(config_dict):
 
 
 def logmsg(level, msg):
-    syslog.syslog(level, 'meteostick: %s' % msg)
+    text = 'meteostick: %s' % msg
+    if weewx.__version__ < '4':
+        syslog.syslog(level, text)
+    else:
+        logger.log(level, text)
 
 
 def logdbg(msg):
@@ -118,13 +126,13 @@ POT = 1  # indices of table with potentials
 
 # Lookup table for soil_moisture_raw values to get a soil_moisture value based
 # upon a linear formula.  Correction factor = 0.009
-SM_MAP = {RAW: ( 99.2, 140.1, 218.7, 226.9, 266.8, 391.7, 475.6, 538.2, 596.1, 673.7, 720.1),
-          POT: (  0.0,   1.0,   9.0,  10.0,  15.0,  35.0,  55.0,  75.0, 100.0, 150.0, 200.0)}
+SM_MAP = {RAW: (99.2, 140.1, 218.7, 226.9, 266.8, 391.7, 475.6, 538.2, 596.1, 673.7, 720.1),
+          POT: (0.0,  1.0,   9.0,   10.0,  15.0,  35.0,  55.0,  75.0,  100.0, 150.0, 200.0)}
 
 # Lookup table for leaf_wetness_raw values to get a leaf_wetness value based
 # upon a linear formula.  Correction factor = 0.0
 LW_MAP = {RAW: (857.0, 864.0, 895.0, 911.0, 940.0, 952.0, 991.0, 1013.0),
-          POT: ( 15.0,  14.0,   5.0,   4.0,   3.0,   2.0,   1.0,    0.0)}
+          POT: (15.0,  14.0,  5.0,   4.0,   3.0,   2.0,   1.0,   0.0)}
 
 RAW_CHANNEL = 0  # unused channel for the receiver stats in raw format
 
