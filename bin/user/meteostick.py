@@ -66,6 +66,9 @@ MPH_TO_MPS = 1609.34 / 3600.0  # meter/mile * hour/second
 if weewx.__version__ >= '4':
     import logging
     logger = logging.getLogger(__name__)
+    severityMap = {syslog.LOG_DEBUG: logging.DEBUG,
+                   syslog.LOG_INFO:  logging.INFO,
+                   syslog.LOG_ERR:   logging.ERROR}
 
 
 def loader(config_dict, engine):
@@ -85,7 +88,7 @@ def logmsg(level, msg):
     if weewx.__version__ < '4':
         syslog.syslog(level, text)
     else:
-        logger.log(level, text)
+        logger.log(severityMap[level], text)
 
 
 def logdbg(msg):
