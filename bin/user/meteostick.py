@@ -563,7 +563,7 @@ class Meteostick(object):
         # From now on the device will produce lines with received data
 
     def send_command(self, cmd):
-        self.serial_port.write(cmd + '\r')
+        self.serial_port.write((cmd + '\r').encode())
         time.sleep(0.2)
         response = self.serial_port.read(self.serial_port.inWaiting())
         dbg_serial(1, "cmd: '%s': %s" % (cmd, response))
