@@ -481,7 +481,7 @@ class Meteostick(object):
             self.serial_port = None
 
     def get_readings(self):
-        buf = self.serial_port.readline()
+        buf = self.serial_port.readline().decode().strip()
         if len(buf) > 0:
             dbg_serial(2, "station said: %s" % ' '.join(["%0.2X" % ord(c) for c in buf]))
         return buf.strip()
@@ -516,13 +516,14 @@ class Meteostick(object):
         while not ready:
             time.sleep(0.1)
             while self.serial_port.inWaiting() > 0:
-                c = self.serial_port.read(1)
+                c = str(self.serial_port.read(1).decode())
                 if c == '?':
                     ready = True
                 elif c in string.printable:
                     response += c
             if time.time() - start_ts > max_wait:
                 raise weewx.WakeupError("No 'ready' response from meteostick after %s seconds" % max_wait)
+        response = response.strip()
         loginf("reset: %s" % response.split('\n')[0])
         dbg_serial(2, "full response to reset: %s" % response)
         # Discard any serial input from the device
@@ -563,10 +564,10 @@ class Meteostick(object):
         # From now on the device will produce lines with received data
 
     def send_command(self, cmd):
-        self.serial_port.write((cmd + '\r').encode())
+        self.serial_port.write((cmd + '\r').encode('ASCII'))
         time.sleep(0.2)
-        response = self.serial_port.read(self.serial_port.inWaiting())
-        dbg_serial(1, "cmd: '%s': %s" % (cmd, response))
+        response = self.serial_port.read(self.serial_port.inWaiting()).decode()
+        dbg_serial(1, "cmd: '%s': %s" % (cmd, response.strip()))
         self.serial_port.flushInput()
         return response
 
@@ -584,7 +585,7 @@ class Meteostick(object):
         if not raw:
             return data
         printable = set(string.printable)
-        fdata = filter(lambda x: x in printable, raw)
+        fdata = "".join(filter(lambda x: x in printable, raw))
         if fdata != raw:
             logerr("unprintable characters in readings: %s" % _fmt(raw))
             return data
@@ -956,7 +957,7 @@ class Meteostick(object):
                 logerr("unknown station with channel: %s, raw message: %s" %
                        (data['channel'], raw))
         elif parts[0] == '#':
-            loginf("%s" % raw)
+            loginf("raw: %s" % raw)
         else:
             logerr("unknown sensor identifier '%s' in %s" % (parts[0], raw))
         return data
