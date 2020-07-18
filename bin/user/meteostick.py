@@ -54,7 +54,7 @@ from weewx.crc16 import crc16
 from future.utils import iteritems
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2020021301'
+DRIVER_VERSION = '2020071801'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
