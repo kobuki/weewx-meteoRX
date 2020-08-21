@@ -508,7 +508,6 @@ class Meteostick(object):
         self.serial_port.flushInput()
 
         # Send reset command
-        self.serial_port.flushInput()
         self.send_command('r')
         time.sleep(0.5)
 
