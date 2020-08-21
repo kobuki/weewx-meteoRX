@@ -63,6 +63,8 @@ DEBUG_RFS = 0
 
 MPH_TO_MPS = 1609.34 / 3600.0  # meter/mile * hour/second
 
+ENCODING = 'ascii'
+
 if weewx.__version__ >= '4':
     import logging
     logger = logging.getLogger(__name__)
@@ -481,7 +483,7 @@ class Meteostick(object):
             self.serial_port = None
 
     def get_readings(self):
-        buf = self.serial_port.readline().decode().strip()
+        buf = self.serial_port.readline().decode(ENCODING).strip()
         if len(buf) > 0:
             dbg_serial(2, "station said: %s" % ' '.join(["%0.2X" % ord(c) for c in buf]))
         return buf.strip()
@@ -506,6 +508,7 @@ class Meteostick(object):
         self.serial_port.flushInput()
 
         # Send reset command
+        self.serial_port.flushInput()
         self.send_command('r')
         time.sleep(2)
 
@@ -516,7 +519,7 @@ class Meteostick(object):
         while not ready:
             time.sleep(0.1)
             while self.serial_port.inWaiting() > 0:
-                c = str(self.serial_port.read(1).decode())
+                c = str(self.serial_port.read(1).decode(ENCODING))
                 if c == '?':
                     ready = True
                 elif c in string.printable:
@@ -564,9 +567,9 @@ class Meteostick(object):
         # From now on the device will produce lines with received data
 
     def send_command(self, cmd):
-        self.serial_port.write((cmd + '\r').encode('ASCII'))
+        self.serial_port.write((cmd + '\r').encode(ENCODING))
         time.sleep(0.2)
-        response = self.serial_port.read(self.serial_port.inWaiting()).decode()
+        response = self.serial_port.read(self.serial_port.inWaiting()).decode(ENCODING)
         dbg_serial(1, "cmd: '%s': %s" % (cmd, response.strip()))
         self.serial_port.flushInput()
         return response
