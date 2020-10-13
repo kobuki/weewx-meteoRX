@@ -425,6 +425,8 @@ class Meteostick(object):
         channels['leaf_soil'] = int(cfg.get('leaf_soil_channel', 0))
         channels['temp_hum_1'] = int(cfg.get('temp_hum_1_channel', 0))
         channels['temp_hum_2'] = int(cfg.get('temp_hum_2_channel', 0))
+        channels['solar'] = int(cfg.get('solar_channel', -1))
+        channels['uv'] = int(cfg.get('uv_channel', -1))
         self.channels = channels
         idmap = dict()  # channel id -> channel name mapping
         for name, chid in iteritems(channels):
@@ -436,6 +438,8 @@ class Meteostick(object):
         loginf('using leaf_soil_channel %s' % channels['leaf_soil'])
         loginf('using temp_hum_1_channel %s' % channels['temp_hum_1'])
         loginf('using temp_hum_2_channel %s' % channels['temp_hum_2'])
+        loginf('using solar_channel %s' % channels['solar'])
+        loginf('using uv_channel %s' % channels['uv'])
 
         self.transmitters = Meteostick.ch_to_xmit(
             channels['iss'], channels['anemometer'], channels['leaf_soil'],
@@ -751,11 +755,11 @@ class Meteostick(object):
                     # message examples:
                     # I 103 40 00 00 12 45 00 B5 2A  -78 2562444 -24
                     # I 103 41 0 DE FF C3 0 A9 8D  -65 2624976 -38 (no sensor)
-                    uv_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
-                    if uv_raw != 0x3FF:
-                        data['uv'] = uv_raw / 50.0
-                        dbg_parse(2, "uv_raw=%04x value=%s" %
-                                  (uv_raw, data['uv']))
+                    if data['channel'] == self.channels['uv'] or self.channels['uv'] == -1:
+                        uv_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
+                        if uv_raw != 0x3FF:
+                            data['uv'] = uv_raw / 50.0
+                            dbg_parse(2, "uv_raw=%04x value=%s" % (uv_raw, data['uv']))
                 elif message_type == 5:
                     # rain rate
                     # message examples:
@@ -796,11 +800,12 @@ class Meteostick(object):
                     # message examples
                     # I 104 61 0 DB 0 43 0 F4 3B  -66 2624972 121
                     # I 104 60 0 0 FF C5 0 79 DA  -77 2562444 137 (no sensor)
-                    sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
-                    if sr_raw < 0x3FE:
-                        data['solar_radiation'] = sr_raw * 1.757936
-                        dbg_parse(2, "solar_radiation_raw=0x%04x value=%s"
-                                  % (sr_raw, data['solar_radiation']))
+                    if data['channel'] == self.channels['solar'] or self.channels['solar'] == -1:
+                        sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
+                        if sr_raw < 0x3FE:
+                            data['solar_radiation'] = sr_raw * 1.757936
+                            dbg_parse(2, "solar_radiation_raw=0x%04x value=%s"
+                                      % (sr_raw, data['solar_radiation']))
                 elif message_type == 7:
                     # solar cell output / solar power (Vue only)
                     # message example:
@@ -1085,6 +1090,11 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     leaf_soil_channel = 0
     temp_hum_1_channel = 0
     temp_hum_2_channel = 0
+    
+    # these are optional and mainly for bogus data filtering
+    # -1 means autodetect from data packets (default); 0 means no sensor at all; 1..8 sets the station
+    solar_channel = 0
+    uv_channel = 0
 
     # Rain bucket type: 0 is 0.01 inch per tip, 1 is 0.2 mm per tip
     rain_bucket_type = 1
@@ -1116,6 +1126,10 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         settings['temp_hum_1_channel'] = self._prompt('temp_hum_1_channel', 0)
         print("Specify the channel of the second Temp/Humidity station (0=none; 1-8)")
         settings['temp_hum_2_channel'] = self._prompt('temp_hum_2_channel', 0)
+        print("Specify the channel of the station with solar sensor (0=none; 1-8)")
+        settings['solar_channel'] = self._prompt('solar_channel', 0)
+        print("Specify the channel of the station with UV sensor (0=none; 1-8)")
+        settings['uv_channel'] = self._prompt('uv_channel', 0)
         return settings
 
 
@@ -1221,6 +1235,10 @@ if __name__ == '__main__':
                       help='channel for T/H sensor 1', default=0)
     parser.add_option('--th2-channel', dest='c_th2', metavar='TH2_CHANNEL',
                       help='channel for T/H sensor 2', default=0)
+    parser.add_option('--solar-channel', dest='c_solar', metavar='SOLAR_CHANNEL',
+                      help='channel for solar sensor', default=-1)
+    parser.add_option('--uv-channel', dest='c_uv', metavar='UV_CHANNEL',
+                      help='channel for UV sensor', default=-1)
     (opts, args) = parser.parse_args()
 
     if opts.version:
@@ -1234,6 +1252,8 @@ if __name__ == '__main__':
                     leaf_soil_channel=int(opts.c_ls),
                     temp_hum_1_channel=int(opts.c_th1),
                     temp_hum_2_channel=int(opts.c_th2),
+                    solar_channel=int(opts.c_solar),
+                    uv_channel=int(opts.c_uv),
                     rf_sensitivity=int(opts.rfs),
                     station_type=opts.station_type) as s:
         while True:
