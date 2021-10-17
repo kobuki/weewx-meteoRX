@@ -54,7 +54,7 @@ from weewx.crc16 import crc16
 from future.utils import iteritems
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2020101301'
+DRIVER_VERSION = '2021101701'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -643,8 +643,13 @@ class Meteostick(object):
             # I 102 51 0 DB FF 73 0 11 41  -65 5249944 202
             raw_msg = [0] * 10
 
-            for i in range(0, 10):
-                raw_msg[i] = chr(int(parts[i + 2], 16))
+            try:
+                for i in range(0, 10):
+                    raw_msg[i] = chr(int(parts[i + 2], 16))
+            except (OverflowError) as e:
+                traceback.print_exc()
+                logerr("parse failed for '%s': %s" % (raw, e))
+                return data
 
             if raw_msg[8] != '\xff' and raw_msg[9] != '\xff':
                 # repeater present, swap bytes for crc processing
