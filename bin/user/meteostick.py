@@ -381,7 +381,7 @@ class Meteostick(object):
     DEFAULT_FREQUENCY = 'EU'
     DEFAULT_RF_SENSITIVITY = 90
     MAX_RF_SENSITIVITY = 125
-    SPIKE_THRESHOLD = 2
+    SPIKE_THRESHOLD = 10
     SPIKE_DIFFERENCE = 40  # currently unused
     SPIKE_RATIO = 3.0
 
@@ -705,9 +705,9 @@ class Meteostick(object):
                     if self.lastWindRaw != -1 \
                             and wind_speed_raw > self.SPIKE_THRESHOLD \
                             and wind_speed_raw > self.lastWindRaw * self.SPIKE_RATIO:
-                        self.lastWindRaw = -1
                         loginf("wind speed spiked over limit, ignoring wind data: %s/%s" %
                                (wind_speed_raw, self.lastWindRaw))
+                        self.lastWindRaw = -1
                     else:
                         self.lastWindRaw = wind_speed_raw
 
