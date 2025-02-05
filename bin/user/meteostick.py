@@ -842,10 +842,9 @@ class Meteostick(object):
                                       % (temp_raw, temp_f, temp_c))
                         else:
                             # analog sensor (thermistor)
-                            temp_raw /= 4  # 10-bits temp value
+                            temp_raw >>= 2  # 10-bits temp value
                             temp_c = Meteostick.calculate_thermistor_temp(temp_raw)
-                            dbg_parse(2, "thermistor temp_raw=0x%03x temp_c=%s"
-                                      % (temp_raw, temp_c))
+                            dbg_parse(2, "thermistor temp_raw=0x%03x temp_c=%s" % (temp_raw, temp_c))
                         if data['channel'] == th1_ch:
                             data['temp_1'] = temp_c
                         elif data['channel'] == th2_ch:
@@ -1018,8 +1017,7 @@ class Meteostick(object):
                       (r, temp_raw, thermistor_temp))
             return thermistor_temp
         except (ValueError, TypeError) as e:
-            logerr('thermistor_temp failed for temp_raw %s r (k ohm) %s'
-                   'error: %s' % (temp_raw, r, e))
+            logerr('thermistor_temp failed for temp_raw %s r (k ohm) %s, error: %s' % (temp_raw, r, e))
         return DEFAULT_SOIL_TEMP
 
     @staticmethod
