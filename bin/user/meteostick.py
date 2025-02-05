@@ -1017,7 +1017,7 @@ class Meteostick(object):
             dbg_parse(3, 'r (k ohm) %s temp_raw %s thermistor_temp %s' %
                       (r, temp_raw, thermistor_temp))
             return thermistor_temp
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
             logerr('thermistor_temp failed for temp_raw %s r (k ohm) %s'
                    'error: %s' % (temp_raw, r, e))
         return DEFAULT_SOIL_TEMP
