@@ -35,7 +35,6 @@ supports the machine and raw formats.  The raw format provides more data and
 seems to result in higher quality readings, so it is the default.
 """
 
-from __future__ import with_statement
 import math
 import traceback
 
@@ -51,7 +50,6 @@ import weewx.engine
 import weewx.wxformulas
 import weewx.units
 from weewx.crc16 import crc16
-from future.utils import iteritems
 
 DRIVER_NAME = 'Meteostick'
 DRIVER_VERSION = '2025020701'
@@ -335,7 +333,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
     def _report_rf_stats(self):
         logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.station.rfs)
         logdbg("Station           max   min   avg   last  count [missed] [good]")
-        for name, chid in iteritems(self.station.channels):
+        for name, chid in self.station.channels.items():
             if chid != 0:
                 self._report_channel(name, chid)
 
@@ -429,7 +427,7 @@ class Meteostick(object):
         channels['uv'] = int(cfg.get('uv_channel', -1))
         self.channels = channels
         idmap = dict()  # channel id -> channel name mapping
-        for name, chid in iteritems(channels):
+        for name, chid in channels.items():
             if chid != 0:
                 idmap[chid] = name
         self.idmap = idmap
