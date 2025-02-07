@@ -827,12 +827,13 @@ class Meteostick(object):
                 elif message_type == 8:
                     # outside temperature
                     # message examples:
-                    # I 103 80 0 0 33 8D 0 25 11  -78 2562444 -25 (digital temp)
+                    # I 103 80 00 00 33 8D 00 25 11  -78 2562444 -25 (digital temp)
 
-                    # I 100 81 0 0 59 45 0 A3 E6  -89 2624956 -42 (analog temp)
-                    # I 104 81 0 DB FF C3 0 AB F8  -66 2624980 125 (no sensor)
+                    # I 100 81 00 00 59 45 00 A3 E6  -89 2624956 -42 (analog temp)
+                    # I 104 81 00 DB FF C3 00 AB F8  -66 2624980 125 (no sensor)
+                    # I 100 87 00 00 FF F5 00 3F 36  -36 2999560 -5 (no sensor - 2024 transmitter)
                     temp_raw = (pkt[3] << 4) + (pkt[4] >> 4)  # 12-bits temp value
-                    if temp_raw != 0xFFC:
+                    if temp_raw != 0xFFC and temp_raw != 0xFFF:
                         if pkt[4] & 0x8:
                             # digital temp sensor - value is twos-complement
                             temp_raw = -(temp_raw ^ 0xFFF) if pkt[3] & 0x80 else temp_raw
@@ -866,8 +867,8 @@ class Meteostick(object):
                 elif message_type == 0xA:
                     # outside humidity
                     # message examples:
-                    # I 101 A0 0 0 C9 3D 0 2A 87  -76 2562432 54
-                    # I 100 A1 0 DB 0 3 0 47 C7  -67 5249932 -130 (no sensor)
+                    # I 101 A0 00 00 C9 3D 00 2A 87  -76 2562432 54
+                    # I 100 A1 00 DB 00 03 00 47 C7  -67 5249932 -130 (no sensor)
                     humidity_raw = ((pkt[4] >> 4) << 8) + pkt[3]
                     if humidity_raw != 0:
                         humidity = humidity_raw / 10.0
@@ -877,8 +878,7 @@ class Meteostick(object):
                             data['humid_2'] = humidity
                         else:
                             data['humidity'] = humidity
-                        dbg_parse(2, "humidity_raw=0x%03x value=%s" %
-                                  (humidity_raw, data['humidity']))
+                        dbg_parse(2, "humidity_raw=0x%03x value=%s" % (humidity_raw, data['humidity']))
                 elif message_type == 0xC:
                     # unknown message
                     # message example:
