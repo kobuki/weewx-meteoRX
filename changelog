@@ -1,3 +1,23 @@
+2026081601 16aug2026
+* require weewx 5.0 or newer; drop the weewx 3/4 compatibility shims
+* log through the standard logging module only; syslog is no longer imported
+* replaced optparse with argparse in the standalone entry point
+* use the pyserial 3.x API (in_waiting, reset_input_buffer) instead of the
+  deprecated camelCase aliases
+* decode serial input with errors='replace' so line noise cannot raise
+  UnicodeDecodeError out of the loop packet generator
+* parse raw packets as bytes and range-check them, instead of round-tripping
+  through chr() and relying on an OverflowError that python 3 never raises
+* fixed the configurator: --set-* options built a command by concatenating a
+  str and an int (TypeError), --set-<x>=0 was silently ignored, --set-debug
+  collided with the base configurator's --debug, and 'o' referenced an option
+  that was never defined (AttributeError on every invocation)
+* fixed a KeyError in the debug log for humidity readings from a temp/hum
+  station on channel temp_hum_1 or temp_hum_2
+* parse failures log their traceback at debug level rather than printing it
+  to stderr
+* added tests/test_parse.py and tests/fakestick.py for hardware-free testing
+
 0.49 20mar2017
 * fix rain counter bug
 
