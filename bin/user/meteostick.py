@@ -35,24 +35,26 @@ supports the machine and raw formats.  The raw format provides more data and
 seems to result in higher quality readings, so it is the default.
 """
 
+import logging
 import math
+import os
+import string
+import time
 import traceback
 
 import serial
-import string
-import syslog
-import time
-import os
 
 import weewx
 import weewx.drivers
 import weewx.engine
 import weewx.wxformulas
-import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2025020702'
+DRIVER_VERSION = '2026081601'
+
+# minimum weewx version this driver supports
+REQUIRED_WEEWX = "5.0"
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -63,12 +65,9 @@ MPH_TO_MPS = 1609.34 / 3600.0  # meter/mile * hour/second
 
 ENCODING = 'ascii'
 
-if weewx.__version__ >= '4':
-    import logging
-    logger = logging.getLogger(__name__)
-    severityMap = {syslog.LOG_DEBUG: logging.DEBUG,
-                   syslog.LOG_INFO:  logging.INFO,
-                   syslog.LOG_ERR:   logging.ERROR}
+log = logging.getLogger(__name__)
+
+weewx.require_weewx_version(DRIVER_NAME, REQUIRED_WEEWX)
 
 
 def loader(config_dict, engine):
@@ -83,24 +82,16 @@ def configurator_loader(config_dict):
     return MeteostickConfigurator()
 
 
-def logmsg(level, msg):
-    text = 'meteostick: %s' % msg
-    if weewx.__version__ < '4':
-        syslog.syslog(level, text)
-    else:
-        logger.log(severityMap[level], text)
-
-
 def logdbg(msg):
-    logmsg(syslog.LOG_DEBUG, msg)
+    log.debug(msg)
 
 
 def loginf(msg):
-    logmsg(syslog.LOG_INFO, msg)
+    log.info(msg)
 
 
 def logerr(msg):
-    logmsg(syslog.LOG_ERR, msg)
+    log.error(msg)
 
 
 def dbg_serial(verbosity, msg):
@@ -114,9 +105,12 @@ def dbg_parse(verbosity, msg):
 
 
 def _fmt(data):
+    """Hex dump of a string or a bytes-like object."""
     if not data:
         return ''
-    return ' '.join(['%02x' % ord(x) for x in data])
+    if isinstance(data, str):
+        data = data.encode(ENCODING, 'replace')
+    return ' '.join(['%02x' % x for x in data])
 
 
 # default temperature for soil moisture and leaf wetness sensors that
@@ -372,7 +366,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         self._init_rf_stats()  # flush rf statistics
 
 
-class Meteostick(object):
+class Meteostick:
     DEFAULT_PORT = '/dev/ttyUSB0'
     DEFAULT_STATION_TYPE = 'vp2'
     DEFAULT_BAUDRATE = 115200
@@ -485,10 +479,13 @@ class Meteostick(object):
             self.serial_port = None
 
     def get_readings(self):
-        buf = self.serial_port.readline().decode(ENCODING).strip()
+        raw = self.serial_port.readline()
+        # rf noise and hot-plugging can yield bytes that are not valid ascii.
+        # replace them rather than raise - parse_readings rejects the line.
+        buf = raw.decode(ENCODING, 'replace').strip()
         if len(buf) > 0:
-            dbg_serial(2, "station said: %s" % ' '.join(["%0.2X" % ord(c) for c in buf]))
-        return buf.strip()
+            dbg_serial(2, "station said: %s" % _fmt(raw))
+        return buf
 
     def get_readings_with_retry(self, max_tries=5, retry_wait=10):
         for ntries in range(0, max_tries):
@@ -507,7 +504,7 @@ class Meteostick(object):
         loginf("establish communication with the meteostick")
 
         # flush any previous data in the input buffer
-        self.serial_port.flushInput()
+        self.serial_port.reset_input_buffer()
 
         # Send reset command
         self.send_command('r')
@@ -519,8 +516,8 @@ class Meteostick(object):
         response = ''
         while not ready:
             time.sleep(0.1)
-            while self.serial_port.inWaiting() > 0:
-                c = str(self.serial_port.read(1).decode(ENCODING))
+            while self.serial_port.in_waiting > 0:
+                c = self.serial_port.read(1).decode(ENCODING, 'replace')
                 if c == '?':
                     ready = True
                 elif c in string.printable:
@@ -532,7 +529,7 @@ class Meteostick(object):
         dbg_serial(2, "full response to reset: %s" % response)
         # Discard any serial input from the device
         time.sleep(0.2)
-        self.serial_port.flushInput()
+        self.serial_port.reset_input_buffer()
         return response
 
     def configure(self):
@@ -570,9 +567,10 @@ class Meteostick(object):
     def send_command(self, cmd):
         self.serial_port.write((cmd + '\r').encode(ENCODING))
         time.sleep(0.2)
-        response = self.serial_port.read(self.serial_port.inWaiting()).decode(ENCODING)
+        response = self.serial_port.read(
+            self.serial_port.in_waiting).decode(ENCODING, 'replace')
         dbg_serial(1, "cmd: '%s': %s" % (cmd, response.strip()))
-        self.serial_port.flushInput()
+        self.serial_port.reset_input_buffer()
         return response
 
     @staticmethod
@@ -603,8 +601,8 @@ class Meteostick(object):
                                   rain_per_tip,
                                   self.station_type)
         except (ValueError, IndexError) as e:
-            traceback.print_exc()
             logerr("parse failed for '%s': %s" % (raw, e))
+            logdbg(traceback.format_exc())
         return data
 
     def parse_raw(self, raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch, rain_per_tip, station_type):
@@ -634,31 +632,34 @@ class Meteostick(object):
                     data['temp_in'] = self.correct_temp_in(data['temp_in'])
 
         elif parts[0] == 'I':
-            # raw Davis sensor message in 8 byte format incl header and
-            # additional info
+            # raw Davis sensor message in the receiver's 10-byte format ('o3'),
+            # incl header and additional info.  field layout:
+            #
+            #   parts[2:12]  the 10 raw bytes: 6 data bytes, the 2 crc bytes,
+            #                then either ff ff or, when the packet came via a
+            #                repeater, the repeater id (in which case the crc
+            #                moves out to bytes 8/9 - see the swap below)
+            #   parts[13]    rf signal strength in dB (negative)
+            #   parts[14]    microseconds since the previous packet
+            #
             # message example:
-            #       ---- raw message ----  rfs ts_last
-            # I 102 51 0 DB FF 73 0 11 41  -65 5249944 202
-            raw_msg = [0] * 10
-
-            try:
-                for i in range(0, 10):
-                    raw_msg[i] = chr(int(parts[i + 2], 16))
-            except (OverflowError) as e:
-                traceback.print_exc()
-                logerr("parse failed for '%s': %s" % (raw, e))
-                return data
-
-            if raw_msg[8] != '\xff' and raw_msg[9] != '\xff':
-                # repeater present, swap bytes for crc processing
-                raw_msg[6:8], raw_msg[8:10] = raw_msg[8:10], raw_msg[6:8]
-                Meteostick._check_crc(raw_msg)
-            else:
-                Meteostick._check_crc(raw_msg[:8])
-
+            #        --------- raw message --------- .. rfs ts_last
+            # I 102 51 00 DB FF 73 00 11 41 FF FF  0 -65 5249944
+            pkt = bytearray(10)
             for i in range(0, 10):
-                raw_msg[i] = parts[i + 2]
-            pkt = bytearray([int(i, base=16) for i in raw_msg])
+                value = int(parts[i + 2], 16)
+                if not 0 <= value <= 0xff:
+                    raise ValueError("byte %d out of range: %s" % (i, parts[i + 2]))
+                pkt[i] = value
+
+            crc_msg = bytearray(pkt)
+            if crc_msg[8] != 0xff and crc_msg[9] != 0xff:
+                # repeater present, swap bytes for crc processing
+                crc_msg[6:8], crc_msg[8:10] = crc_msg[8:10], crc_msg[6:8]
+                Meteostick._check_crc(crc_msg)
+            else:
+                Meteostick._check_crc(crc_msg[:8])
+
             data['channel'] = (pkt[0] & 0x7) + 1
             battery_low = (pkt[0] >> 3) & 0x1
             data['rf_signal'] = int(parts[13])
@@ -876,7 +877,7 @@ class Meteostick(object):
                             data['humid_2'] = humidity
                         else:
                             data['humidity'] = humidity
-                        dbg_parse(2, "humidity_raw=0x%03x value=%s" % (humidity_raw, data['humidity']))
+                        dbg_parse(2, "humidity_raw=0x%03x value=%s" % (humidity_raw, humidity))
                 elif message_type == 0xC:
                     # unknown message
                     # message example:
@@ -1146,8 +1147,10 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         _parser.add_option(
             "--set-verbose", dest="verbose", metavar="X", type=int,
             help="set verbose: 0=off, 1=on; default off")
+        # note: dest cannot be 'debug' - the base configurator already uses
+        # that for its own --debug flag
         _parser.add_option(
-            "--set-debug", dest="debug", metavar="X", type=int,
+            "--set-debug", dest="set_debug", metavar="X", type=int,
             help="set debug: 0=off, 1=on; default off")
         # bug in meteostick: according to docs, 0=high, 1=low
         _parser.add_option(
@@ -1176,16 +1179,15 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
             print(info)
         cfg = {
             'v': options.verbose,
-            'd': options.debug,
+            'd': options.set_debug,
             'l': options.led,
             'b': options.bandwidth,
             'p': options.probe,
             'r': options.repeater,
-            'c': options.channel,
-            'o': options.format}
+            'c': options.channel}
         for opt in cfg:
-            if cfg[opt]:
-                cmd = opt + cfg[opt]
+            if cfg[opt] is not None:
+                cmd = '%s%d' % (opt, cfg[opt])
                 print("set station parameter %s" % cmd)
                 driver.station.send_command(cmd)
         if options.opts:
@@ -1194,53 +1196,52 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         driver.closePort()
 
 # define a main entry point for basic testing of the station without weewx
-# engine and service overhead.  invoke this as follows from the weewx root dir:
+# engine and service overhead.  invoke this as follows:
 #
-# PYTHONPATH=bin python bin/user/meteostick.py
+# PYTHONPATH=/etc/weewx/bin python3 /etc/weewx/bin/user/meteostick.py
 
 
 if __name__ == '__main__':
-    import optparse
+    import argparse
 
-    usage = """%prog [options] [--help]"""
+    logging.basicConfig(level=logging.DEBUG,
+                        format='%(asctime)s meteostick: %(levelname)s %(message)s')
 
-    syslog.openlog('meteostick', syslog.LOG_PID | syslog.LOG_CONS)
-    syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_DEBUG))
-    parser = optparse.OptionParser(usage=usage)
-    parser.add_option('--version', dest='version', action='store_true',
-                      help='display driver version')
-    parser.add_option('--station-type', dest='station_type', metavar='STATION_TYPE',
-                      help='station type, either vp2 or vue',
-                      default=Meteostick.DEFAULT_STATION_TYPE)
-    parser.add_option('--port', dest='port', metavar='PORT',
-                      help='serial port to which the station is connected',
-                      default=Meteostick.DEFAULT_PORT)
-    parser.add_option('--baud', dest='baud', metavar='BAUDRATE',
-                      help='serial port baud rate',
-                      default=Meteostick.DEFAULT_BAUDRATE)
-    parser.add_option('--freq', dest='freq', metavar='FREQUENCY',
-                      help='comm frequency, either US (915MHz) or EU (868MHz)',
-                      default=Meteostick.DEFAULT_FREQUENCY)
-    parser.add_option('--rfs', dest='rfs', metavar='RF_SENSITIVITY',
-                      help='RF sensitivity in dB',
-                      default=Meteostick.DEFAULT_RF_SENSITIVITY)
-    parser.add_option('--iss-channel', dest='c_iss', metavar='ISS_CHANNEL',
-                      help='channel for ISS', default=1)
-    parser.add_option('--anemometer-channel', dest='c_a',
-                      metavar='ANEMOMETER_CHANNEL',
-                      help='channel for anemometer', default=0)
-    parser.add_option('--leaf-soil-channel', dest='c_ls',
-                      metavar='LEAF_SOIL_CHANNEL',
-                      help='channel for leaf-soil', default=0)
-    parser.add_option('--th1-channel', dest='c_th1', metavar='TH1_CHANNEL',
-                      help='channel for T/H sensor 1', default=0)
-    parser.add_option('--th2-channel', dest='c_th2', metavar='TH2_CHANNEL',
-                      help='channel for T/H sensor 2', default=0)
-    parser.add_option('--solar-channel', dest='c_solar', metavar='SOLAR_CHANNEL',
-                      help='channel for solar sensor', default=-1)
-    parser.add_option('--uv-channel', dest='c_uv', metavar='UV_CHANNEL',
-                      help='channel for UV sensor', default=-1)
-    (opts, args) = parser.parse_args()
+    parser = argparse.ArgumentParser(description='meteoRX/meteostick driver test harness')
+    parser.add_argument('--version', dest='version', action='store_true',
+                        help='display driver version')
+    parser.add_argument('--station-type', dest='station_type', metavar='STATION_TYPE',
+                        help='station type, either vp2 or vue',
+                        default=Meteostick.DEFAULT_STATION_TYPE)
+    parser.add_argument('--port', dest='port', metavar='PORT',
+                        help='serial port to which the station is connected',
+                        default=Meteostick.DEFAULT_PORT)
+    parser.add_argument('--baud', dest='baud', metavar='BAUDRATE', type=int,
+                        help='serial port baud rate',
+                        default=Meteostick.DEFAULT_BAUDRATE)
+    parser.add_argument('--freq', dest='freq', metavar='FREQUENCY',
+                        help='comm frequency, either US (915MHz) or EU (868MHz)',
+                        default=Meteostick.DEFAULT_FREQUENCY)
+    parser.add_argument('--rfs', dest='rfs', metavar='RF_SENSITIVITY', type=int,
+                        help='RF sensitivity in dB',
+                        default=Meteostick.DEFAULT_RF_SENSITIVITY)
+    parser.add_argument('--iss-channel', dest='c_iss', metavar='ISS_CHANNEL',
+                        type=int, help='channel for ISS', default=1)
+    parser.add_argument('--anemometer-channel', dest='c_a',
+                        metavar='ANEMOMETER_CHANNEL', type=int,
+                        help='channel for anemometer', default=0)
+    parser.add_argument('--leaf-soil-channel', dest='c_ls',
+                        metavar='LEAF_SOIL_CHANNEL', type=int,
+                        help='channel for leaf-soil', default=0)
+    parser.add_argument('--th1-channel', dest='c_th1', metavar='TH1_CHANNEL',
+                        type=int, help='channel for T/H sensor 1', default=0)
+    parser.add_argument('--th2-channel', dest='c_th2', metavar='TH2_CHANNEL',
+                        type=int, help='channel for T/H sensor 2', default=0)
+    parser.add_argument('--solar-channel', dest='c_solar', metavar='SOLAR_CHANNEL',
+                        type=int, help='channel for solar sensor', default=-1)
+    parser.add_argument('--uv-channel', dest='c_uv', metavar='UV_CHANNEL',
+                        type=int, help='channel for UV sensor', default=-1)
+    opts = parser.parse_args()
 
     if opts.version:
         print("meteostick driver version %s" % DRIVER_VERSION)
