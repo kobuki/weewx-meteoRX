@@ -17,12 +17,12 @@ from weewx.crc16 import crc16
 CHANNEL = 1
 
 
-def make_line(body6, channel=CHANNEL, rssi=-65, ts_last=2562444):
+def make_line(body6, channel=CHANNEL, rssi=-65, ts_last=2562444, fei=-1):
     data = bytearray(body6)
     data[0] = (data[0] & 0xF0) | ((channel - 1) & 0x7)
     crc = crc16(data)
     full = data + bytearray([(crc >> 8) & 0xff, crc & 0xff]) + bytearray([0xff, 0xff])
-    fields = ['I', '100'] + ['%02X' % b for b in full] + ['0', str(rssi), str(ts_last)]
+    fields = ['I', '100'] + ['%02X' % b for b in full] + ['0', str(rssi), str(ts_last), str(fei)]
     return ' '.join(fields) + '\r\n'
 
 
@@ -70,6 +70,8 @@ def main():
                     time.sleep(1.0)
                     os.write(master, banner.encode('ascii'))
                     started = True
+                elif cmd.startswith('a'):
+                    os.write(master, ("# OK afc %s\r\n" % cmd[1:]).encode('ascii'))
                 else:
                     os.write(master, ("# ack %s\r\n" % cmd).encode('ascii'))
         if started:

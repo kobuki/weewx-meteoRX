@@ -29,6 +29,13 @@ The default RF sensitivity value is 90 (-90 dB).  Values between 95 and 125
 tend to give too much noise and false readings (the higher value the more
 noise).  Values lower than 50 likely result in no readings at all.
 
+A meteoRX (VPTools) receiver can also be told how to follow the frequency
+drift of the transmitters with the afc option: 0 turns AFC off, 1..50 enables
+the receiver's software AFC with the correction limited to that many kHz, and
+h selects the radio's own automatic AFC.  When the option is not set, nothing
+is sent and the firmware default applies.  The frequency offset measured by
+the software AFC is shown in the RF summary (debug_rf_sensitivity).
+
 The meteostick outputs data in one of 3 formats: human-readable, machine, and
 raw.  The machine format is, in fact, human-readable as well.  This driver
 supports the machine and raw formats.  The raw format provides more data and
@@ -51,7 +58,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2026081601'
+DRIVER_VERSION = '2026102701'
 
 # minimum weewx version this driver supports
 REQUIRED_WEEWX = "5.0"
@@ -231,7 +238,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             readings = self.station.get_readings_with_retry(self.max_tries, self.retry_wait)
             data = self.station.parse_readings(readings, self.rain_per_tip)
             if data:
-                self._update_rf_stats(data['channel'], data['rf_signal'], data['rf_missed'])
+                self._update_rf_stats(data['channel'], data['rf_signal'], data['rf_missed'], data.get('rf_fei'))
                 dbg_parse(2, "data: %s" % data)
                 packet = self._data_to_packet(data)
                 if packet is not None:
@@ -275,11 +282,14 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             'last': [0] * self.NUM_CHAN,
             'avg': [0] * self.NUM_CHAN,
             'missed': [0] * self.NUM_CHAN,
+            'fei_sum': [0] * self.NUM_CHAN,
+            'fei_cnt': [0] * self.NUM_CHAN,
+            'fei_last': [None] * self.NUM_CHAN,
             'pctgood': [None] * self.NUM_CHAN,
             'pctgood_total': None,
             'ts': int(time.time())}
 
-    def _update_rf_stats(self, ch, signal, missed):
+    def _update_rf_stats(self, ch, signal, missed, fei=None):
         # update the rf statistics
         self.rf_stats['min'][ch] = min(signal, self.rf_stats['min'][ch])
         self.rf_stats['max'][ch] = max(signal, self.rf_stats['max'][ch])
@@ -287,6 +297,10 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         self.rf_stats['cnt'][ch] += 1
         self.rf_stats['last'][ch] = signal
         self.rf_stats['missed'][ch] += missed
+        if fei is not None:
+            self.rf_stats['fei_sum'][ch] += fei
+            self.rf_stats['fei_cnt'][ch] += 1
+            self.rf_stats['fei_last'][ch] = fei
 
     def _update_rf_summaries(self):
         # Update the summary stats, skip channels that do not matter.
@@ -326,7 +340,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
 
     def _report_rf_stats(self):
         logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.station.rfs)
-        logdbg("Station           max   min   avg   last  count [missed] [good]")
+        logdbg("Station           max   min   avg   last  count [missed] [good]  [fei kHz avg last]")
         for name, chid in self.station.channels.items():
             if chid != 0:
                 self._report_channel(name, chid)
@@ -337,7 +351,12 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             msg = "WARNING: rf_sensitivity might be too low for this channel"
         else:
             msg = ""
-        logdbg("%s %5d %5d %5d %5d %5d %7d      %s   %s" %
+        if self.rf_stats['fei_cnt'][ch] > 0:
+            fei = "%5.1f %4d" % (float(self.rf_stats['fei_sum'][ch]) / self.rf_stats['fei_cnt'][ch],
+                                 self.rf_stats['fei_last'][ch])
+        else:
+            fei = "    -    -"
+        logdbg("%s %5d %5d %5d %5d %5d %7d      %s   %s   %s" %
                (label.ljust(15),
                 self.rf_stats['max'][ch],
                 self.rf_stats['min'][ch],
@@ -346,6 +365,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                 self.rf_stats['cnt'][ch],
                 self.rf_stats['missed'][ch],
                 self.rf_stats['pctgood'][ch],
+                fei,
                 msg))
 
     def new_archive_record(self, event):
@@ -373,6 +393,7 @@ class Meteostick:
     DEFAULT_FREQUENCY = 'EU'
     DEFAULT_RF_SENSITIVITY = 90
     MAX_RF_SENSITIVITY = 125
+    MAX_AFC = 50
     SPIKE_THRESHOLD = 10
     SPIKE_DIFFERENCE = 40  # currently unused
     SPIKE_RATIO = 3.0
@@ -400,6 +421,14 @@ class Meteostick:
         self.rfs = absrfs
         self.rf_threshold = absrfs * 2
         loginf('using rf sensitivity %s (-%s dB)' % (rfs, absrfs))
+
+        afc = cfg.get('afc')
+        if afc is not None:
+            afc = str(afc).strip().lower()
+            if afc != 'h' and not (afc.isdigit() and 0 <= int(afc) <= self.MAX_AFC):
+                raise ValueError("invalid afc %s" % afc)
+            loginf('using afc %s' % afc)
+        self.afc = afc
 
         self.intemp_corr = float(cfg.get('intemp_corr', 0))
         loginf('using intemp_corr %f' % self.intemp_corr)
@@ -554,6 +583,12 @@ class Meteostick:
         # Set device to produce 10-byte raw data
         self.send_command('o3')
 
+        # Set AFC mode (meteoRX only)
+        if self.afc is not None:
+            response = self.send_command('a' + self.afc)
+            if '# OK' not in response:
+                loginf('WARNING: receiver did not accept afc setting: %s' % response.strip())
+
         # Set the frequency. Valid frequencies are US, EU and AU
         command = 'm0'  # default to US
         if self.frequency == 'AU':
@@ -641,6 +676,7 @@ class Meteostick:
             #                moves out to bytes 8/9 - see the swap below)
             #   parts[13]    rf signal strength in dB (negative)
             #   parts[14]    microseconds since the previous packet
+            #   parts[15]    frequency offset in kHz (meteoRX, when present)
             #
             # message example:
             #        --------- raw message --------- .. rfs ts_last
@@ -664,6 +700,8 @@ class Meteostick:
             battery_low = (pkt[0] >> 3) & 0x1
             data['rf_signal'] = int(parts[13])
             time_since_last = int(parts[14])
+            if n > 15:
+                data['rf_fei'] = int(parts[15])
             packet_delay = (41 + data['channel'] - 1) / 16.0 * 1000000
             rf_missed = int(time_since_last / packet_delay + 0.5) - 1
             data['rf_missed'] = rf_missed if rf_missed >= 0 else 0  # startup packet delays can be small causing -1 here
@@ -1101,6 +1139,10 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     # Rain bucket type: 0 is 0.01 inch per tip, 1 is 0.2 mm per tip
     rain_bucket_type = 1
 
+    # meteoRX (VPTools) receivers only: AFC mode, 0 = off, 1..50 = software
+    # AFC limited to that many kHz, h = the radio's own AFC.  Not sent if unset.
+    # afc = 12
+
     # The driver to use
     driver = user.meteostick
 """
@@ -1225,6 +1267,8 @@ if __name__ == '__main__':
     parser.add_argument('--rfs', dest='rfs', metavar='RF_SENSITIVITY', type=int,
                         help='RF sensitivity in dB',
                         default=Meteostick.DEFAULT_RF_SENSITIVITY)
+    parser.add_argument('--afc', dest='afc', metavar='AFC',
+                        help='meteoRX AFC mode: 0=off, 1..50=software AFC limit in kHz, h=radio AFC')
     parser.add_argument('--iss-channel', dest='c_iss', metavar='ISS_CHANNEL',
                         type=int, help='channel for ISS', default=1)
     parser.add_argument('--anemometer-channel', dest='c_a',
@@ -1257,6 +1301,7 @@ if __name__ == '__main__':
                     solar_channel=int(opts.c_solar),
                     uv_channel=int(opts.c_uv),
                     rf_sensitivity=int(opts.rfs),
+                    afc=opts.afc,
                     station_type=opts.station_type) as s:
         while True:
             print(time.time(), s.get_readings())

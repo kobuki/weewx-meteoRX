@@ -23,7 +23,7 @@ def check(label, cond, detail=''):
         FAILURES.append(label)
 
 
-def make_line(body6, channel, rssi=-65, ts_last=2562444, repeater=False):
+def make_line(body6, channel, rssi=-65, ts_last=2562444, repeater=False, fei=None):
     """body6: the 6 payload bytes; byte 0 carries the message type in its high
     nibble.  Returns a raw 10-byte-format 'I' line with a valid Davis CRC."""
     data = bytearray(body6)
@@ -40,6 +40,8 @@ def make_line(body6, channel, rssi=-65, ts_last=2562444, repeater=False):
         crc = crc16(data)
         full = data + bytearray([(crc >> 8) & 0xff, crc & 0xff]) + bytearray([0xff, 0xff])
     fields = ['I', '100'] + ['%02X' % b for b in full] + ['0', str(rssi), str(ts_last)]
+    if fei is not None:
+        fields.append(str(fei))
     return ' '.join(fields)
 
 
@@ -139,6 +141,36 @@ def main():
             check('survived %r' % bad, True)
         except Exception as e:
             check('survived %r' % bad, False, '%s: %s' % (type(e).__name__, e))
+
+    print("frequency offset (meteoRX) is parsed when present")
+    line = make_line([0x50, 0x20, 0x30, 0xFF, 0x75, 0x00], channel=1, fei=-3)
+    d = stick.parse_readings(line, rpt)
+    check('rf_fei', d.get('rf_fei') == -3, d.get('rf_fei'))
+    check('rf_signal with fei', d.get('rf_signal') == -65, d.get('rf_signal'))
+    line = make_line([0x50, 0x20, 0x30, 0xFF, 0x75, 0x00], channel=1)
+    d = stick.parse_readings(line, rpt)
+    check('no rf_fei without the field', 'rf_fei' not in d, d.get('rf_fei'))
+
+    print("afc option")
+    for good, want in [(None, None), ('12', '12'), (0, '0'), ('H', 'h'), (' 50 ', '50')]:
+        st = Meteostick(port='/dev/null', afc=good) if good is not None else Meteostick(port='/dev/null')
+        check('afc %r' % (good,), st.afc == want, st.afc)
+    for bad in ['51', '-1', 'x', '1.5', '']:
+        try:
+            Meteostick(port='/dev/null', afc=bad)
+            check('afc %r rejected' % bad, False)
+        except ValueError:
+            check('afc %r rejected' % bad, True)
+
+    print("rf stats keep the frequency offset")
+    drv = MeteostickDriver.__new__(MeteostickDriver)
+    drv._init_rf_stats()
+    drv._update_rf_stats(1, -70, 0, -2)
+    drv._update_rf_stats(1, -71, 1, 1)
+    drv._update_rf_stats(1, -72, 0)
+    check('fei count', drv.rf_stats['fei_cnt'][1] == 2, drv.rf_stats['fei_cnt'][1])
+    check('fei sum', drv.rf_stats['fei_sum'][1] == -1, drv.rf_stats['fei_sum'][1])
+    check('fei last', drv.rf_stats['fei_last'][1] == 1, drv.rf_stats['fei_last'][1])
 
     print("bad crc is rejected without a crash")
     line = make_line([0xE0, 0x00, 0x00, 0x05, 0x05, 0x00], channel=1)

@@ -1,3 +1,10 @@
+2026102701 27oct2026
+* new afc option for meteoRX (VPTools) receivers: 0 = off, 1..50 = software
+  AFC limited to that many kHz, h = the radio's own AFC; sent as the 'a'
+  command before the band is set, and only when configured
+* parse the frequency offset that meteoRX appends to raw packets, and show its
+  average and last value per channel in the RF summary
+
 2026081601 16aug2026
 * require weewx 5.0 or newer; drop the weewx 3/4 compatibility shims
 * log through the standard logging module only; syslog is no longer imported
