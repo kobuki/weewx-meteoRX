@@ -58,7 +58,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2026102701'
+DRIVER_VERSION = '2026102901'
 
 # minimum weewx version this driver supports
 REQUIRED_WEEWX = "5.0"
@@ -284,7 +284,6 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             'missed': [0] * self.NUM_CHAN,
             'fei_sum': [0] * self.NUM_CHAN,
             'fei_cnt': [0] * self.NUM_CHAN,
-            'fei_last': [None] * self.NUM_CHAN,
             'pctgood': [None] * self.NUM_CHAN,
             'pctgood_total': None,
             'ts': int(time.time())}
@@ -300,7 +299,6 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         if fei is not None:
             self.rf_stats['fei_sum'][ch] += fei
             self.rf_stats['fei_cnt'][ch] += 1
-            self.rf_stats['fei_last'][ch] = fei
 
     def _update_rf_summaries(self):
         # Update the summary stats, skip channels that do not matter.
@@ -339,33 +337,38 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                   % (received_total, missed_total, self.rf_stats['pctgood_total']))
 
     def _report_rf_stats(self):
-        logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.station.rfs)
-        logdbg("Station           max   min   avg   last  count [missed] [good]  [fei kHz avg last]")
+        # one row per channel id; several station types can share a channel
+        names = dict()
         for name, chid in self.station.channels.items():
-            if chid != 0:
-                self._report_channel(name, chid)
+            if chid > 0:
+                names.setdefault(chid, []).append(name)
+        logdbg("RF summary: rf_sensitivity=%s" % self.station.rfs)
+        logdbg("ch    max    min    avg   last  count  missed  good  fei_avg  stations")
+        for ch in sorted(names):
+            self._report_channel(ch, names[ch])
 
-    def _report_channel(self, label, ch):
+    def _report_channel(self, ch, names):
         if self.rf_stats['pctgood'][ch] is None \
                 or (-self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['pctgood'][ch] < 85):
-            msg = "WARNING: rf_sensitivity might be too low for this channel"
+            msg = "  WARNING: rf_sensitivity might be too low for this channel"
         else:
             msg = ""
+        pctgood = self.rf_stats['pctgood'][ch]
         if self.rf_stats['fei_cnt'][ch] > 0:
-            fei = "%5.1f %4d" % (float(self.rf_stats['fei_sum'][ch]) / self.rf_stats['fei_cnt'][ch],
-                                 self.rf_stats['fei_last'][ch])
+            fei = "%.1f" % (float(self.rf_stats['fei_sum'][ch]) / self.rf_stats['fei_cnt'][ch])
         else:
-            fei = "    -    -"
-        logdbg("%s %5d %5d %5d %5d %5d %7d      %s   %s   %s" %
-               (label.ljust(15),
+            fei = "-"
+        logdbg("%2d  %5d  %5d  %5d  %5d  %5d  %6d  %4s  %7s  %s%s" %
+               (ch,
                 self.rf_stats['max'][ch],
                 self.rf_stats['min'][ch],
                 self.rf_stats['avg'][ch],
                 self.rf_stats['last'][ch],
                 self.rf_stats['cnt'][ch],
                 self.rf_stats['missed'][ch],
-                self.rf_stats['pctgood'][ch],
+                pctgood if pctgood is not None else "-",
                 fei,
+                ", ".join(names),
                 msg))
 
     def new_archive_record(self, event):

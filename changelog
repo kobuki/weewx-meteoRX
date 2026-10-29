@@ -1,3 +1,10 @@
+2026102901 29oct2026
+* RF summary: one row per channel, listing every station type configured on
+  it, instead of one row per station type with duplicated numbers; solar and
+  uv set to any channel (-1) no longer print the fake channel's stats
+* RF summary: right-aligned columns without brackets, and only the average
+  frequency offset (fei_avg) instead of average and last
+
 2026102701 27oct2026
 * new afc option for meteoRX (VPTools) receivers: 0 = off, 1..50 = software
   AFC limited to that many kHz, h = the radio's own AFC; sent as the 'a'

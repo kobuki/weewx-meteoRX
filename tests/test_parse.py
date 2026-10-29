@@ -170,7 +170,6 @@ def main():
     drv._update_rf_stats(1, -72, 0)
     check('fei count', drv.rf_stats['fei_cnt'][1] == 2, drv.rf_stats['fei_cnt'][1])
     check('fei sum', drv.rf_stats['fei_sum'][1] == -1, drv.rf_stats['fei_sum'][1])
-    check('fei last', drv.rf_stats['fei_last'][1] == 1, drv.rf_stats['fei_last'][1])
 
     print("bad crc is rejected without a crash")
     line = make_line([0xE0, 0x00, 0x00, 0x05, 0x05, 0x00], channel=1)
