@@ -58,7 +58,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2026102901'
+DRIVER_VERSION = '2026110201'
 
 # minimum weewx version this driver supports
 REQUIRED_WEEWX = "5.0"
@@ -476,16 +476,17 @@ class Meteostick:
     @staticmethod
     def ch_to_xmit(iss_channel, anemometer_channel, leaf_soil_channel,
                    temp_hum_1_channel, temp_hum_2_channel):
+        # 0 means not present, the ISS included: any single station type can be used on its own
         transmitters = 0
-        transmitters += 1 << (iss_channel - 1)
-        if anemometer_channel != 0:
-            transmitters += 1 << (anemometer_channel - 1)
-        if leaf_soil_channel != 0:
-            transmitters += 1 << (leaf_soil_channel - 1)
-        if temp_hum_1_channel != 0:
-            transmitters += 1 << (temp_hum_1_channel - 1)
-        if temp_hum_2_channel != 0:
-            transmitters += 1 << (temp_hum_2_channel - 1)
+        for ch in (iss_channel, anemometer_channel, leaf_soil_channel,
+                   temp_hum_1_channel, temp_hum_2_channel):
+            if not 0 <= ch <= 8:
+                raise ValueError("invalid transmitter channel %s, use 1-8 or 0 for none" % ch)
+            if ch != 0:
+                transmitters |= 1 << (ch - 1)
+        if transmitters == 0:
+            raise ValueError("no transmitter configured: set at least one of iss_channel, "
+                             "anemometer_channel, leaf_soil_channel, temp_hum_1_channel, temp_hum_2_channel")
         return transmitters
 
     @staticmethod

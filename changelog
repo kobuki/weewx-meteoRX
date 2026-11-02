@@ -1,3 +1,8 @@
+2026110201 02nov2026
+* iss_channel = 0 is accepted, so any station type can be configured without
+  an ISS (it used to fail at startup with "negative shift count"); a channel
+  outside 0-8, or no transmitter at all, now stops with a clear error
+
 2026102901 29oct2026
 * RF summary: one row per channel, listing every station type configured on
   it, instead of one row per station type with duplicated numbers; solar and
