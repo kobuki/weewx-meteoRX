@@ -1,3 +1,11 @@
+2026110601 06nov2026
+* reset waits for the receiver's banner after the reset command: a receiver
+  reset again when its port was opened (DTR over a network serial bridge)
+  used to process the configuration only after its second boot, and the
+  replies were logged against the wrong commands
+* configure checks the settings in a final '?' status line and sends the
+  configuration again if any differ (up to 3 times, then fails)
+
 2026110201 02nov2026
 * iss_channel = 0 is accepted, so any station type can be configured without
   an ISS (it used to fail at startup with "negative shift count"); a channel

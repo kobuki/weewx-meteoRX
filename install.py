@@ -18,7 +18,7 @@ def loader():
 class MeteostickInstaller(ExtensionInstaller):
     def __init__(self):
         super(MeteostickInstaller, self).__init__(
-            version="2026110201",
+            version="2026110601",
             name='meteostick',
             description='Collect data from meteostick via serial port',
             author="Matthew Wall",

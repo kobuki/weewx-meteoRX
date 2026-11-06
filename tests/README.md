@@ -24,7 +24,11 @@ Exits non-zero if anything fails.
 Simulates a receiver on a pty so weewxd can be run end to end without
 hardware.  It answers the reset and configuration commands, then streams
 CRC-valid packets (with some line noise and malformed lines mixed in, to
-check that the driver survives them).
+check that the driver survives them).  `FAKE_MODE` selects the behaviour:
+`wxreceiver` (default, like VPTools WxReceiver), `doubleboot` (an extra banner
+from an earlier boot, as after a DTR reset over a network serial bridge),
+`drop:<cmd>` (the first such command is lost, e.g. `drop:x180`) and `legacy`
+(no reset reply, no settings in the `?` reply).
 
 ```
 PYTHONPATH=~/weewx-data/bin python3 tests/fakestick.py /tmp/ttyMETEO &

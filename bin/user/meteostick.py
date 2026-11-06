@@ -45,6 +45,7 @@ seems to result in higher quality readings, so it is the default.
 import logging
 import math
 import os
+import re
 import string
 import time
 import traceback
@@ -58,7 +59,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2026110201'
+DRIVER_VERSION = '2026110601'
 
 # minimum weewx version this driver supports
 REQUIRED_WEEWX = "5.0"
@@ -532,46 +533,99 @@ class Meteostick:
             logerr(msg)
             raise weewx.RetriesExceeded(msg)
 
-    def reset(self, max_wait=30):
-        """Reset the device, leaving it in a state that we can talk to it."""
+    def reset(self, max_wait=30, settle=3.0):
+        """Reset the device, leaving it in a state that we can talk to it.
+
+        A receiver can boot twice: opening the port over a network serial
+        bridge resets it by DTR, then it executes the 'r' as well. Commands sent
+        after the first boot's banner would be processed only after the second
+        boot, so wait for the banner that follows the receiver's reset reply,
+        or for a quiet period after a banner if no reset reply comes (firmware
+        without one, or an 'r' swallowed by the bootloader)."""
         loginf("establish communication with the meteostick")
 
         # flush any previous data in the input buffer
         self.serial_port.reset_input_buffer()
+        self.serial_port.write('r\r'.encode(ENCODING))
+        dbg_serial(1, "cmd: 'r'")
 
-        # Send reset command
-        self.send_command('r')
-        time.sleep(0.5)
-
-        # Wait until we see the ? character
         start_ts = time.time()
-        ready = False
-        response = ''
-        while not ready:
+        last_rx = start_ts
+        buf = ''
+        lines = []          # banner lines of the current boot
+        resetting = False   # the receiver acknowledged the reset
+        prompt_ts = None    # when the current boot's '?' prompt was seen
+        while True:
             time.sleep(0.1)
-            while self.serial_port.in_waiting > 0:
-                c = self.serial_port.read(1).decode(ENCODING, 'replace')
-                if c == '?':
-                    ready = True
-                elif c in string.printable:
-                    response += c
-            if time.time() - start_ts > max_wait:
+            now = time.time()
+            n = self.serial_port.in_waiting
+            if n > 0:
+                buf += self.serial_port.read(n).decode(ENCODING, 'replace')
+                buf = buf.replace('\r', '\n')
+                parts = buf.split('\n')
+                buf = parts.pop()
+                if buf.strip() == '?':
+                    parts.append(buf)  # the prompt may come without a line end
+                    buf = ''
+                for line in parts:
+                    line = ''.join(c for c in line if c in string.printable).strip()
+                    if not line:
+                        continue
+                    if line.startswith('?'):
+                        line = '?'  # a prompt without line end runs into the first data line
+                    if line != '?' and not line.startswith('#'):
+                        continue  # data from a receiver already running, not part of a boot
+                    dbg_serial(2, "reset: station said: %s" % line)
+                    last_rx = now  # quiet means no further boot or reset messages
+                    if line == '?':
+                        prompt_ts = now
+                        if resetting:
+                            break
+                    elif 'resetting' in line:
+                        resetting = True
+                        lines = []
+                        prompt_ts = None
+                    else:
+                        if prompt_ts is not None:
+                            lines = []  # a new boot after a complete banner
+                            prompt_ts = None
+                        lines.append(line)
+                if resetting and prompt_ts is not None:
+                    break
+            if prompt_ts is not None and now - last_rx >= settle:
+                break
+            if now - start_ts > max_wait:
                 raise weewx.WakeupError("No 'ready' response from meteostick after %s seconds" % max_wait)
-        response = response.strip()
-        loginf("reset: %s" % response.split('\n')[0])
+        response = '\n'.join(lines)
+        loginf("reset: %s" % (lines[0] if lines else ''))
         dbg_serial(2, "full response to reset: %s" % response)
         # Discard any serial input from the device
         time.sleep(0.2)
         self.serial_port.reset_input_buffer()
         return response
 
-    def configure(self):
+    def configure(self, max_tries=3):
         """Configure the device to send data continuously."""
         loginf("configure meteostick to logger mode")
 
         # Show default settings (they might change with a new firmware version)
         self.send_command('?')
 
+        for ntries in range(1, max_tries + 1):
+            self._send_configuration()
+            status = self.send_command('?')
+            mismatch = self.check_status(status)
+            if mismatch is None:
+                loginf("receiver status not verifiable: %s" % status.strip())
+                return
+            if not mismatch:
+                loginf("receiver configured: %s" % status.strip())
+                return
+            loginf("receiver configuration mismatch (%s), attempt %d of %d: %s"
+                   % (', '.join(mismatch), ntries, max_tries, status.strip()))
+        raise weewx.WakeupError("receiver did not accept the configuration after %d attempts" % max_tries)
+
+    def _send_configuration(self):
         # Set RF threshold
         self.send_command('x' + str(self.rf_threshold))
 
@@ -594,14 +648,40 @@ class Meteostick:
                 loginf('WARNING: receiver did not accept afc setting: %s' % response.strip())
 
         # Set the frequency. Valid frequencies are US, EU and AU
-        command = 'm0'  # default to US
-        if self.frequency == 'AU':
-            command = 'm2'
-        elif self.frequency == 'EU':
-            command = 'm1'
-        self.send_command(command)
+        self.send_command('m' + self.band_code())
 
         # From now on the device will produce lines with received data
+
+    def band_code(self):
+        return {'AU': '2', 'EU': '1'}.get(self.frequency, '0')  # default to US
+
+    def expected_status(self):
+        """The settings a '?' status line should show after configure()."""
+        expected = {'t': str(self.transmitters), 'o': '3', 'm': self.band_code(),
+                    'x': str(self.rf_threshold), 'r': '1'}
+        if self.afc is not None:
+            expected['a'] = self.afc if self.afc == 'h' else str(int(self.afc))
+        return expected
+
+    def check_status(self, status):
+        """Compare a '?' status line like '# OK t3 f1 o3 m1 x200 r1 a12 running'
+        with the configuration. Returns the mismatching settings, or None if
+        the response has no such line (firmware that reports otherwise)."""
+        for line in status.splitlines():
+            line = line.strip()
+            if not line.startswith('# OK '):
+                continue
+            tokens = line[5:].split()
+            seen = dict((m.group(1), m.group(2)) for m in
+                        (re.match(r'^([a-z])(\d+|h)$', tok) for tok in tokens) if m)
+            if 't' not in seen:
+                continue
+            mismatch = ['%s%s, expected %s%s' % (k, seen.get(k, '?'), k, v)
+                        for k, v in sorted(self.expected_status().items()) if seen.get(k) != v]
+            if 'stopped' in tokens:
+                mismatch.append('receiver stopped')
+            return mismatch
+        return None
 
     def send_command(self, cmd):
         self.serial_port.write((cmd + '\r').encode(ENCODING))

@@ -40,21 +40,35 @@ PACKETS = [
 
 
 def main():
+    """FAKE_MODE selects the receiver behaviour:
+    wxreceiver  - like WxReceiver: '# OK resetting', banner, state shown by '?' (default)
+    doubleboot  - as above, plus a banner from an earlier boot (a DTR reset when the
+                  port was opened over a network bridge) arriving just before it
+    drop:<cmd>  - as wxreceiver, but the first <cmd> (e.g. t3) is lost
+    legacy      - old fake: banner only, '# ack' replies, '?' without settings
+    """
+    import select
     link = sys.argv[1]
+    mode = os.environ.get('FAKE_MODE', 'wxreceiver')
+    drop = mode.split(':', 1)[1] if mode.startswith('drop:') else None
     master, slave = pty.openpty()
     slave_name = os.ttyname(slave)
     if os.path.islink(link) or os.path.exists(link):
         os.unlink(link)
     os.symlink(slave_name, link)
-    print("pty ready at %s -> %s" % (link, slave_name), flush=True)
+    print("pty ready at %s -> %s, mode %s" % (link, slave_name, mode), flush=True)
 
-    banner = ("# MeteoRX simulator\r\n# fake firmware 1.0\r\n?")
-    started = False
+    def send(text):
+        os.write(master, text.encode('ascii'))
+
+    defaults = {'t': '1', 'o': '0', 'm': '1', 'x': '190', 'r': '0', 'a': '12'}
+    state = dict(defaults)
+    running = False
+    boots = 0
     buf = b''
     i = 0
     while True:
         # drain any command bytes without blocking
-        import select
         r, _, _ = select.select([master], [], [], 0.2)
         if r:
             chunk = os.read(master, 1024)
@@ -63,18 +77,47 @@ def main():
                 cmd, buf = buf.split(b'\r', 1)
                 cmd = cmd.decode('ascii', 'replace').strip()
                 print("cmd: %r" % cmd, flush=True)
+                if drop is not None and cmd == drop:
+                    drop = None
+                    print("dropped %r" % cmd, flush=True)
+                    continue
+                if mode == 'legacy':
+                    if cmd == 'r':
+                        # real hardware takes about a second to come back after a reset
+                        time.sleep(1.0)
+                        send("# MeteoRX simulator\r\n# fake firmware 1.0\r\n?")
+                        running = True
+                    elif cmd.startswith('a'):
+                        send("# OK afc %s\r\n" % cmd[1:])
+                    else:
+                        send("# ack %s\r\n" % cmd)
+                    continue
                 if cmd == 'r':
-                    # real hardware takes about a second to come back after a
-                    # reset; the driver flushes its input before it starts
-                    # looking for the '?' prompt, so answering instantly loses it
+                    if mode == 'doubleboot' and boots == 0:
+                        send("# WxReceiver fake ready to accept commands\r\n?\r\n")
+                        print("banner (earlier boot)", flush=True)
+                        time.sleep(0.1)
+                    boots += 1
+                    send("# OK resetting\r\n")
+                    running = False
+                    state = dict(defaults)
                     time.sleep(1.0)
-                    os.write(master, banner.encode('ascii'))
-                    started = True
-                elif cmd.startswith('a'):
-                    os.write(master, ("# OK afc %s\r\n" % cmd[1:]).encode('ascii'))
+                    send("# WxReceiver fake ready to accept commands\r\n?\r\n")
+                    print("banner (after reset)", flush=True)
+                elif cmd == '?':
+                    send("# OK t%s f1 o%s m%s x%s r%s a%s %s\r\n" % (
+                        state['t'], state['o'], state['m'], state['x'], state['r'], state['a'],
+                        'running' if running else 'stopped'))
+                elif cmd[:1] in state and len(cmd) > 1:
+                    state[cmd[0]] = cmd[1:]
+                    if cmd[0] == 'm':
+                        running = True
+                    send("# OK %s\r\n" % cmd)
+                elif cmd == 'f1':
+                    send("# OK filter on\r\n")
                 else:
-                    os.write(master, ("# ack %s\r\n" % cmd).encode('ascii'))
-        if started:
+                    send("# ERR bad command\r\n")
+        if running:
             pkt = PACKETS[i % len(PACKETS)]
             if isinstance(pkt, str):
                 pkt = pkt.encode('ascii')
