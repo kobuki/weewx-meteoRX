@@ -46,11 +46,14 @@ def main():
                   port was opened over a network bridge) arriving just before it
     drop:<cmd>  - as wxreceiver, but the first <cmd> (e.g. t3) is lost
     legacy      - old fake: banner only, '# ack' replies, '?' without settings
+    garbage:<n> - as wxreceiver, but line noise sits in front of each of the first n
+                  commands (as after the host boots), so they come out as bad commands
     """
     import select
     link = sys.argv[1]
     mode = os.environ.get('FAKE_MODE', 'wxreceiver')
     drop = mode.split(':', 1)[1] if mode.startswith('drop:') else None
+    garbage = int(mode.split(':', 1)[1]) if mode.startswith('garbage:') else 0
     master, slave = pty.openpty()
     slave_name = os.ttyname(slave)
     if os.path.islink(link) or os.path.exists(link):
@@ -76,6 +79,9 @@ def main():
             while b'\r' in buf:
                 cmd, buf = buf.split(b'\r', 1)
                 cmd = cmd.decode('ascii', 'replace').strip()
+                if garbage > 0:
+                    garbage -= 1
+                    cmd = '\ufffd\x00' + cmd
                 print("cmd: %r" % cmd, flush=True)
                 if drop is not None and cmd == drop:
                     drop = None
@@ -92,7 +98,9 @@ def main():
                     else:
                         send("# ack %s\r\n" % cmd)
                     continue
-                if cmd == 'r':
+                if cmd == '':
+                    send("# OK\r\n")  # WxReceiver acks an empty command
+                elif cmd == 'r':
                     if mode == 'doubleboot' and boots == 0:
                         send("# WxReceiver fake ready to accept commands\r\n?\r\n")
                         print("banner (earlier boot)", flush=True)

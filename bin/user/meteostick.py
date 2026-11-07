@@ -59,7 +59,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '2026110601'
+DRIVER_VERSION = '2026110701'
 
 # minimum weewx version this driver supports
 REQUIRED_WEEWX = "5.0"
@@ -533,7 +533,7 @@ class Meteostick:
             logerr(msg)
             raise weewx.RetriesExceeded(msg)
 
-    def reset(self, max_wait=30, settle=3.0):
+    def reset(self, max_wait=30, settle=3.0, max_resends=2):
         """Reset the device, leaving it in a state that we can talk to it.
 
         A receiver can boot twice: opening the port over a network serial
@@ -541,13 +541,22 @@ class Meteostick:
         after the first boot's banner would be processed only after the second
         boot, so wait for the banner that follows the receiver's reset reply,
         or for a quiet period after a banner if no reset reply comes (firmware
-        without one, or an 'r' swallowed by the bootloader)."""
+        without one, or an 'r' swallowed by the bootloader).
+
+        Line noise, e.g. from the host booting, can sit in the receiver's
+        command buffer and turn the 'r' into a bad command. A bare line end
+        first ends any such partial command, and an error reply before the
+        reset is acknowledged sends the 'r' again."""
         loginf("establish communication with the meteostick")
 
-        # flush any previous data in the input buffer
+        # end a partial command in the receiver's buffer, then drop its reply
+        self.serial_port.reset_input_buffer()
+        self.serial_port.write('\r'.encode(ENCODING))
+        time.sleep(0.3)
         self.serial_port.reset_input_buffer()
         self.serial_port.write('r\r'.encode(ENCODING))
         dbg_serial(1, "cmd: 'r'")
+        resends = 0
 
         start_ts = time.time()
         last_rx = start_ts
@@ -577,6 +586,13 @@ class Meteostick:
                         continue  # data from a receiver already running, not part of a boot
                     dbg_serial(2, "reset: station said: %s" % line)
                     last_rx = now  # quiet means no further boot or reset messages
+                    if line.startswith('# ERR') and not resetting and resends < max_resends:
+                        resends += 1
+                        loginf("reset: receiver replied '%s', sending reset again (%d of %d)"
+                               % (line, resends, max_resends))
+                        self.serial_port.write('r\r'.encode(ENCODING))
+                        dbg_serial(1, "cmd: 'r'")
+                        continue
                     if line == '?':
                         prompt_ts = now
                         if resetting:

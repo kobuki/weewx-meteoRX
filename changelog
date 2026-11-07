@@ -1,3 +1,9 @@
+2026110701 07nov2026
+* reset sends a bare line end before the reset command, and sends the reset
+  again if the receiver answers it with an error: line noise from the host
+  booting could sit in the receiver's command buffer, turn the reset into a
+  bad command, and make startup fail after 30 s with "No 'ready' response"
+
 2026110601 06nov2026
 * reset waits for the receiver's banner after the reset command: a receiver
   reset again when its port was opened (DTR over a network serial bridge)
